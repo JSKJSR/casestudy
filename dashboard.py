@@ -1076,12 +1076,11 @@ elif page == "Product & Category":
 elif page == "Store Network":
 
     st.markdown('<p class="pg-title">Store Network</p>', unsafe_allow_html=True)
-    st.markdown('<p class="pg-sub">Per-store KPIs · Efficiency · LFL · Area managers</p>', unsafe_allow_html=True)
+    st.markdown('<p class="pg-sub">Performance · Targets · Growth · Efficiency</p>', unsafe_allow_html=True)
 
-    # Per-store KPIs using correct split: sales rows for COGS/orders, return rows for return metrics
+    # ── Per-store KPI aggregation ─────────────────────────────────────────────
     s_only = sales[sales["Order Type"] == "Sales"]
     r_only = sales[sales["Order Type"] == "Return"]
-
     bgt_s  = budget.groupby("Store ID")["Budget Sales"].sum().reset_index()
 
     st_s = (s_only.groupby("Store ID")
@@ -1091,163 +1090,229 @@ elif page == "Store Network":
     st_r = (r_only.groupby("Store ID")
             .agg(ReturnSales=("Sales","sum"), ReturnCost=("Cost","sum"))
             .reset_index())
-
     st_agg = (st_s.merge(st_r, on="Store ID", how="left")
               .merge(store_raw[["Store ID","Store Name","Store Country",
                                 "Store Channel","Store Format","Store SQM",
                                 "Store Area Manager","Store LFL Status",
                                 "Store Status"]], on="Store ID", how="left")
               .merge(bgt_s, on="Store ID", how="left"))
+    st_agg["ReturnSales"] = st_agg["ReturnSales"].fillna(0)
+    st_agg["ReturnCost"]  = st_agg["ReturnCost"].fillna(0)
+    st_agg["Revenue"]     = st_agg["GrossSales"] - st_agg["ReturnSales"].abs()
+    st_agg["NetCOGS"]     = st_agg["COGS"] - st_agg["ReturnCost"].abs()
+    st_agg["GrossProfit"] = st_agg["Revenue"] - st_agg["NetCOGS"]
+    st_agg["GM%"]         = (st_agg["GrossProfit"] / st_agg["Revenue"] * 100).fillna(0)
+    st_agg["AOV"]         = st_agg["Revenue"] / st_agg["SalesOrders"]
+    st_agg["Units/Order"] = st_agg["SalesQty"] / st_agg["SalesOrders"]
+    st_agg["ReturnRate%"] = (st_agg["ReturnSales"].abs() / st_agg["GrossSales"] * 100).fillna(0)
+    st_agg["Sales/SQM"]   = st_agg["Revenue"] / st_agg["Store SQM"]
+    st_agg["vs Bgt%"]     = (st_agg["Revenue"] / st_agg["Budget Sales"] - 1) * 100
 
-    st_agg["ReturnSales"]  = st_agg["ReturnSales"].fillna(0)
-    st_agg["ReturnCost"]   = st_agg["ReturnCost"].fillna(0)
+    # LY per store
+    ly_yrs_s = [y-1 for y in sel_years]
+    st_ly = (sales_raw[sales_raw["Year"].isin(ly_yrs_s) &
+                       sales_raw["Store ID"].isin(valid_stores) &
+                       (sales_raw["Order Type"]=="Sales")]
+             .groupby("Store ID")["Net Sales"].sum().reset_index()
+             .rename(columns={"Net Sales":"LY_Revenue"}))
+    st_agg = st_agg.merge(st_ly, on="Store ID", how="left")
+    st_agg["vs LY%"] = (st_agg["Revenue"] / st_agg["LY_Revenue"] - 1) * 100
 
-    # KPI 3 – Net Sales
-    st_agg["Revenue"]      = st_agg["GrossSales"] - st_agg["ReturnSales"].abs()
-    # KPI 6 – Net COGS
-    st_agg["NetCOGS"]      = st_agg["COGS"] - st_agg["ReturnCost"].abs()
-    # KPI 7 – Gross Profit
-    st_agg["GrossProfit"]  = st_agg["Revenue"] - st_agg["NetCOGS"]
-    # KPI 8 – Profit Margin
-    st_agg["GM%"]          = (st_agg["GrossProfit"] / st_agg["Revenue"] * 100).fillna(0)
-    # KPI 10 – AOV (÷ sales orders only)
-    st_agg["AOV"]          = st_agg["Revenue"] / st_agg["SalesOrders"]
-    # KPI 11 – Units per Order (sales qty ÷ sales orders)
-    st_agg["Units/Order"]  = st_agg["SalesQty"] / st_agg["SalesOrders"]
-    # KPI 12 – Return Rate
-    st_agg["ReturnRate%"]  = (st_agg["ReturnSales"].abs() / st_agg["GrossSales"] * 100).fillna(0)
-    # Store efficiency
-    st_agg["Sales/SQM"]    = st_agg["Revenue"] / st_agg["Store SQM"]
-    st_agg["vs Bgt%"]      = (st_agg["Revenue"] / st_agg["Budget Sales"] - 1) * 100
-
-    # Network-level KPIs via calc_kpis()
     KS = calc_kpis(sales, budget)
 
-    k1,k2,k3,k4,k5,k6,k7 = st.columns(7)
-    k1.metric("Total Stores",   f"{st_agg['Store ID'].nunique()}")
-    k2.metric("Open Stores",    f"{(st_agg['Store Status']=='Open').sum()}")
-    k3.metric("Net Sales",      fmt(KS["net_sales"]))
-    k4.metric("Gross Profit",   fmt(KS["gross_profit"]))
-    k5.metric("Profit Margin",  f"{KS['profit_margin']:.1f}%")
-    k6.metric("Avg AOV",        f"${st_agg['AOV'].mean():.0f}")
-    k7.metric("Avg $/SQM",      f"${st_agg['Sales/SQM'].mean():.0f}")
+    # ── Headline KPIs ─────────────────────────────────────────────────────────
+    h1,h2,h3,h4,h5,h6 = st.columns(6)
+    def _skpi(col, label, val, good=True):
+        color = C["green"] if good else C["red"]
+        col.markdown(f"""<div style='background:#fff;border-radius:8px;padding:12px 8px;
+            border:1px solid {C["border"]};text-align:center'>
+            <div style='font-size:11px;color:{C["grey"]};margin-bottom:4px'>{label}</div>
+            <div style='font-size:18px;font-weight:700;color:{color}'>{val}</div>
+        </div>""", unsafe_allow_html=True)
+    open_n  = (st_agg["Store Status"]=="Open").sum()
+    closed_n= (st_agg["Store Status"]=="Closed").sum()
+    _skpi(h1, "Open / Closed",   f"{open_n} / {closed_n}",   True)
+    _skpi(h2, "Net Sales",        fmt(KS["net_sales"]),        True)
+    _skpi(h3, "vs Target",        fmt(KS["vs_bgt"],"%"),       KS["vs_bgt"]>=0)
+    _skpi(h4, "Gross Margin",     f"{KS['profit_margin']:.1f}%", KS["profit_margin"]>=40)
+    _skpi(h5, "Avg $/SQM",        f"${st_agg['Sales/SQM'].mean():.0f}", True)
+    _skpi(h6, "Avg AOV",          f"${st_agg['AOV'].mean():.0f}",        True)
+    st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
 
-    st.markdown('<p class="sec-lbl">Store vs Target</p>', unsafe_allow_html=True)
-    cs1, cs2 = st.columns([3,2])
+    # ══ Q1: Which stores are making money? ════════════════════════════════════
+    st.markdown('<p class="sec-lbl">① Which stores are making money?</p>', unsafe_allow_html=True)
 
-    with cs1:
-        top = st_agg.sort_values("Revenue", ascending=True).tail(20)
-        fig_sb = go.Figure()
-        fig_sb.add_trace(go.Bar(y=top["Store Name"], x=top["Revenue"],
-                                name="Actual", orientation="h",
-                                marker_color=C["blue"]))
-        fig_sb.add_trace(go.Bar(y=top["Store Name"], x=top["Budget Sales"],
-                                name="Target", orientation="h",
-                                marker_color=C["amber"], opacity=.4))
-        fig_sb.update_layout(
-            title="Store Revenue: Actual vs Target",
-            barmode="overlay", height=500,
-            legend=dict(orientation="h", y=-0.08),
-            xaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
-            **CHART)
-        st.plotly_chart(fig_sb, use_container_width=True)
+    q1a, q1b = st.columns(2)
+    with q1a:
+        top5  = st_agg.nlargest(5,  "Revenue")[["Store Name","Revenue","GM%","Store Country"]].copy()
+        bot5  = st_agg.nsmallest(5, "Revenue")[["Store Name","Revenue","GM%","Store Country"]].copy()
+        top5["rank"] = [f"#{i}" for i in range(1,6)]
+        bot5["rank"] = [f"#{i}" for i in range(len(st_agg), len(st_agg)-5, -1)]
+        top5["type"] = "Top 5"
+        bot5["type"] = "Bottom 5"
+        tb = pd.concat([top5, bot5])
+        colors = [C["blue"] if t=="Top 5" else C["red"] for t in tb["type"]]
+        fig_tb = go.Figure(go.Bar(
+            y=tb["Store Name"], x=tb["Revenue"], orientation="h",
+            marker_color=colors, opacity=.85,
+            text=tb.apply(lambda r: f"{fmt(r['Revenue'])}  GM {r['GM%']:.0f}%", axis=1),
+            textposition="outside",
+        ))
+        fig_tb.update_layout(title="Top 5 vs Bottom 5 Stores by Revenue",
+                             height=360,
+                             xaxis=dict(showgrid=False, showticklabels=False),
+                             yaxis=dict(showgrid=False),
+                             **CHART)
+        st.plotly_chart(fig_tb, use_container_width=True)
 
-    with cs2:
+    with q1b:
         fig_sc = px.scatter(
-            st_agg, x="Sales/SQM", y="vs Bgt%",
+            st_agg, x="Revenue", y="GM%",
             size="Revenue", color="Store Country",
             hover_name="Store Name",
-            title="Efficiency · $/SQM vs Target %",
-            size_max=42,
-            color_discrete_sequence=[C["blue"],C["amber"],C["green"],C["purple"]],
+            hover_data={"Revenue":":$,.0f","GM%":":.1f","Store Country":False},
+            title="Revenue vs Gross Margin % (bubble = revenue size)",
+            size_max=40,
+            color_discrete_sequence=[C["blue"],C["teal"],C["amber"],C["purple"]],
         )
-        fig_sc.add_hline(y=0, line_dash="dash", line_color=C["red"], opacity=.5)
-        fig_sc.add_vline(x=st_agg["Sales/SQM"].median(),
-                         line_dash="dot", line_color=C["grey"], opacity=.4)
-        fig_sc.update_layout(
-            height=500,
-            xaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
-            yaxis=dict(showgrid=True, gridcolor=C["grid"], ticksuffix="%"),
-            **CHART)
+        fig_sc.add_hline(y=st_agg["GM%"].mean(), line_dash="dot",
+                         line_color=C["grey"], opacity=.5,
+                         annotation_text="Avg GM%", annotation_position="right")
+        fig_sc.update_layout(height=360,
+                             xaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
+                             yaxis=dict(showgrid=True, gridcolor=C["grid"], ticksuffix="%"),
+                             **CHART)
         st.plotly_chart(fig_sc, use_container_width=True)
 
-    st.markdown('<p class="sec-lbl">Like-for-Like (LFL)</p>', unsafe_allow_html=True)
-    lfl_ids  = st_agg.loc[st_agg["Store LFL Status"]==1,"Store ID"].tolist()
-    lfl_rev  = st_agg.loc[st_agg["Store LFL Status"]==1,"Revenue"].sum()
-    tot_rev  = st_agg["Revenue"].sum()
+    # ══ Q2: Which stores are hitting their targets? ═══════════════════════════
+    st.markdown('<p class="sec-lbl">② Which stores are hitting their targets?</p>', unsafe_allow_html=True)
 
-    la,lb,lc_ = st.columns(3)
-    la.metric("LFL Stores",    f"{len(lfl_ids)}")
-    lb.metric("LFL Revenue",   fmt(lfl_rev))
-    lc_.metric("LFL % of Total",f"{lfl_rev/tot_rev*100:.1f}%" if tot_rev else "N/A")
+    st_bgt = st_agg.dropna(subset=["vs Bgt%"]).sort_values("vs Bgt%")
+    st_bgt["col"] = st_bgt["vs Bgt%"].apply(lambda v: C["green"] if v >= 0 else C["red"])
+    st_bgt["lbl"] = st_bgt["vs Bgt%"].apply(lambda v: f"{v:+.1f}%")
 
-    mall = (sales.groupby(["Year","Month"])["Net Sales"].sum().reset_index()
-            .assign(Date=lambda d: pd.to_datetime(d[["Year","Month"]].assign(day=1)))
-            .sort_values("Date"))
-    mlfl = (sales[sales["Store ID"].isin(lfl_ids)]
-            .groupby(["Year","Month"])["Net Sales"].sum().reset_index()
-            .assign(Date=lambda d: pd.to_datetime(d[["Year","Month"]].assign(day=1)))
-            .sort_values("Date"))
-    fig_lfl = go.Figure()
-    fig_lfl.add_trace(go.Scatter(x=mall["Date"], y=mall["Net Sales"],
-                                 name="All Stores",
-                                 line=dict(color=C["blue"], width=2)))
-    fig_lfl.add_trace(go.Scatter(x=mlfl["Date"], y=mlfl["Net Sales"],
-                                 name="LFL Stores",
-                                 line=dict(color=C["green"], width=2, dash="dash")))
-    fig_lfl.update_layout(title="LFL vs Total Network – Monthly Revenue",
-                          height=230, legend=dict(orientation="h",y=-0.25),
-                          xaxis=dict(showgrid=False),
-                          yaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
+    fig_bgt = go.Figure(go.Bar(
+        y=st_bgt["Store Name"], x=st_bgt["vs Bgt%"], orientation="h",
+        marker_color=st_bgt["col"], opacity=.85,
+        text=st_bgt["lbl"], textposition="outside",
+    ))
+    fig_bgt.add_vline(x=0, line_color="#374151", line_width=1.5)
+    fig_bgt.update_layout(title="All Stores · vs Target % (green = above, red = below)",
+                          height=560,
+                          xaxis=dict(showgrid=False, ticksuffix="%", zeroline=False),
+                          yaxis=dict(showgrid=False),
                           **CHART)
-    st.plotly_chart(fig_lfl, use_container_width=True)
+    st.plotly_chart(fig_bgt, use_container_width=True)
 
-    st.markdown('<p class="sec-lbl">Management View</p>', unsafe_allow_html=True)
-    ma1, ma2 = st.columns(2)
+    # ══ Q3: Are stores growing? ══════════════════════════════════════════════
+    st.markdown('<p class="sec-lbl">③ Are stores growing?</p>', unsafe_allow_html=True)
 
-    with ma1:
-        am = (st_agg.groupby("Store Area Manager")
-              .agg(Revenue=("Revenue","sum")).reset_index()
-              .sort_values("Revenue", ascending=False))
-        am["lbl"] = am["Revenue"].apply(fmt)
-        fig_am = go.Figure(go.Bar(x=am["Store Area Manager"], y=am["Revenue"],
-                                  text=am["lbl"], textposition="outside",
-                                  marker_color=C["navy"]))
-        fig_am.update_layout(title="Revenue by Area Manager", height=260,
-                             yaxis=dict(showgrid=True, gridcolor=C["grid"],
-                                        tickprefix="$"), **CHART)
-        st.plotly_chart(fig_am, use_container_width=True)
+    st_ly_chart = st_agg.dropna(subset=["vs LY%"]).sort_values("vs LY%")
+    st_ly_chart["col"] = st_ly_chart["vs LY%"].apply(lambda v: C["green"] if v >= 0 else C["red"])
+    st_ly_chart["lbl"] = st_ly_chart["vs LY%"].apply(lambda v: f"{v:+.1f}%")
 
-    with ma2:
-        fmt_a = st_agg.groupby("Store Format")["Revenue"].sum().reset_index()
-        fig_f = px.pie(fmt_a, values="Revenue", names="Store Format",
-                       title="Revenue by Store Format", hole=.45,
-                       color_discrete_sequence=[C["blue"],C["teal"],C["amber"]])
-        fig_f.update_layout(height=260, **CHART)
-        st.plotly_chart(fig_f, use_container_width=True)
+    fig_ly = go.Figure(go.Bar(
+        y=st_ly_chart["Store Name"], x=st_ly_chart["vs LY%"], orientation="h",
+        marker_color=st_ly_chart["col"], opacity=.85,
+        text=st_ly_chart["lbl"], textposition="outside",
+    ))
+    fig_ly.add_vline(x=0, line_color="#374151", line_width=1.5)
+    fig_ly.update_layout(title="All Stores · vs Last Year % (green = growing, red = declining)",
+                         height=560,
+                         xaxis=dict(showgrid=False, ticksuffix="%", zeroline=False),
+                         yaxis=dict(showgrid=False),
+                         **CHART)
+    st.plotly_chart(fig_ly, use_container_width=True)
 
-    st.markdown('<p class="sec-lbl">Store Detail</p>', unsafe_allow_html=True)
-    tbl = st_agg[["Store Name","Store Country","Store Channel","Store Format",
-                  "Store Status","GrossSales","Revenue","Budget Sales",
-                  "vs Bgt%","GrossProfit","GM%","ReturnRate%",
-                  "AOV","Units/Order","Sales/SQM"]].copy()
-    tbl.columns = ["Store","Country","Channel","Format","Status",
-                   "Gross Sales","Net Sales","Target","vs Bgt%",
-                   "Gross Profit","GM%","Return Rate%","AOV","Units/Order","$/SQM"]
-    st.dataframe(
-        tbl.style
-        .format({"Gross Sales":"${:,.0f}","Net Sales":"${:,.0f}",
-                 "Target":"${:,.0f}","vs Bgt%":"{:+.1f}%",
-                 "Gross Profit":"${:,.0f}","GM%":"{:.1f}%",
-                 "Return Rate%":"{:.1f}%","AOV":"${:.0f}",
-                 "Units/Order":"{:.2f}","$/SQM":"${:.0f}"})
-        .background_gradient(subset=["Net Sales"], cmap="Blues")
-        .map(lambda v: "color:#107C10;font-weight:700" if isinstance(v,(int,float)) and v>=0
-             else ("color:#D13438;font-weight:700" if isinstance(v,(int,float)) else ""),
-             subset=["vs Bgt%"]),
-        use_container_width=True,
-        hide_index=True,
-    )
+    # ══ Q4: Are stores operating efficiently? ════════════════════════════════
+    st.markdown('<p class="sec-lbl">④ Are stores operating efficiently?</p>', unsafe_allow_html=True)
+
+    ef1, ef2, ef3 = st.columns(3)
+
+    with ef1:
+        sqm = st_agg.sort_values("Sales/SQM", ascending=True)
+        sqm["col"] = sqm["Sales/SQM"].apply(
+            lambda v: C["green"] if v >= sqm["Sales/SQM"].median() else C["amber"])
+        fig_sqm = go.Figure(go.Bar(
+            y=sqm["Store Name"], x=sqm["Sales/SQM"], orientation="h",
+            marker_color=sqm["col"], opacity=.85,
+        ))
+        fig_sqm.add_vline(x=sqm["Sales/SQM"].median(), line_dash="dot",
+                          line_color=C["grey"], opacity=.6,
+                          annotation_text="Median", annotation_position="top")
+        fig_sqm.update_layout(title="Revenue per SQM ($/m²)", height=560,
+                              xaxis=dict(showgrid=False, tickprefix="$", showticklabels=False),
+                              yaxis=dict(showgrid=False),
+                              **CHART)
+        st.plotly_chart(fig_sqm, use_container_width=True)
+
+    with ef2:
+        aov_s = st_agg.sort_values("AOV", ascending=True)
+        aov_s["col"] = aov_s["AOV"].apply(
+            lambda v: C["green"] if v >= aov_s["AOV"].median() else C["amber"])
+        fig_aov = go.Figure(go.Bar(
+            y=aov_s["Store Name"], x=aov_s["AOV"], orientation="h",
+            marker_color=aov_s["col"], opacity=.85,
+        ))
+        fig_aov.add_vline(x=aov_s["AOV"].median(), line_dash="dot",
+                          line_color=C["grey"], opacity=.6,
+                          annotation_text="Median", annotation_position="top")
+        fig_aov.update_layout(title="AOV — Avg Order Value ($/order)", height=560,
+                              xaxis=dict(showgrid=False, tickprefix="$", showticklabels=False),
+                              yaxis=dict(showgrid=False),
+                              **CHART)
+        st.plotly_chart(fig_aov, use_container_width=True)
+
+    with ef3:
+        ret_s = st_agg.sort_values("ReturnRate%", ascending=False)
+        ret_s["col"] = ret_s["ReturnRate%"].apply(
+            lambda v: C["red"] if v > 20 else (C["amber"] if v > 15 else C["green"]))
+        fig_rr = go.Figure(go.Bar(
+            y=ret_s["Store Name"], x=ret_s["ReturnRate%"], orientation="h",
+            marker_color=ret_s["col"], opacity=.85,
+            text=ret_s["ReturnRate%"].apply(lambda v: f"{v:.1f}%"), textposition="outside",
+        ))
+        fig_rr.add_vline(x=20, line_dash="dash", line_color=C["red"], opacity=.5,
+                         annotation_text="20% alert", annotation_position="top")
+        fig_rr.update_layout(title="Return Rate % per Store", height=560,
+                              xaxis=dict(showgrid=False, ticksuffix="%", showticklabels=False),
+                              yaxis=dict(showgrid=False),
+                              **CHART)
+        st.plotly_chart(fig_rr, use_container_width=True)
+
+    # ══ Area Manager accountability ═══════════════════════════════════════════
+    st.markdown('<p class="sec-lbl">Area Manager Accountability</p>', unsafe_allow_html=True)
+    am_agg = (st_agg.groupby("Store Area Manager")
+              .agg(Revenue=("Revenue","sum"),
+                   Budget=("Budget Sales","sum"),
+                   Stores=("Store ID","count"))
+              .reset_index())
+    am_agg["vs Tgt%"] = (am_agg["Revenue"] / am_agg["Budget"] - 1) * 100
+    am_agg = am_agg.sort_values("vs Tgt%")
+    am_agg["col"] = am_agg["vs Tgt%"].apply(lambda v: C["green"] if v >= 0 else C["red"])
+
+    fig_am = go.Figure()
+    fig_am.add_trace(go.Bar(
+        x=am_agg["Store Area Manager"], y=am_agg["Revenue"],
+        name="Revenue", marker_color=C["blue"], opacity=.8,
+        text=am_agg["Revenue"].apply(fmt), textposition="outside",
+    ))
+    fig_am.add_trace(go.Scatter(
+        x=am_agg["Store Area Manager"], y=am_agg["vs Tgt%"],
+        name="vs Target %", yaxis="y2", mode="markers+text",
+        marker=dict(color=am_agg["col"], size=14, symbol="diamond"),
+        text=am_agg["vs Tgt%"].apply(lambda v: f"{v:+.1f}%"),
+        textposition="top center", textfont=dict(size=10),
+    ))
+    fig_am.update_layout(
+        title="Area Manager · Revenue & vs Target %",
+        height=300,
+        yaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
+        yaxis2=dict(overlaying="y", side="right", ticksuffix="%",
+                    showgrid=False, zeroline=False),
+        legend=dict(orientation="h", y=-0.2),
+        **CHART)
+    st.plotly_chart(fig_am, use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ██  PAGE 5 — INSIGHTS & ACTIONS
