@@ -1166,21 +1166,37 @@ elif page == "Store Network":
         st.plotly_chart(fig_tb, use_container_width=True)
 
     with q1b:
-        fig_sc = px.scatter(
-            st_agg, x="Revenue", y="GM%",
-            size="Revenue", color="Store Country",
-            hover_name="Store Name",
-            title="Revenue vs Gross Margin % (bubble = revenue size)",
-            size_max=40,
-            color_discrete_sequence=[C["blue"],C["teal"],C["amber"],C["purple"]],
-        )
+        country_pal = {c: col for c, col in zip(
+            sorted(st_agg["Store Country"].unique()),
+            [C["blue"], C["teal"], C["amber"], C["purple"]])}
+        # Scale bubble size: normalise Revenue to range 8–40px
+        rev_min, rev_max = st_agg["Revenue"].min(), st_agg["Revenue"].max()
+        bubble_size = (8 + 32 * (st_agg["Revenue"] - rev_min) /
+                       (rev_max - rev_min + 1)).tolist()
+        fig_sc = go.Figure()
+        for country, grp in st_agg.groupby("Store Country"):
+            idx = grp.index
+            bsz = (8 + 32 * (grp["Revenue"] - rev_min) /
+                   (rev_max - rev_min + 1)).tolist()
+            fig_sc.add_trace(go.Scatter(
+                x=grp["Revenue"], y=grp["GM%"],
+                mode="markers",
+                name=country,
+                marker=dict(size=bsz, color=country_pal.get(country, C["grey"]),
+                            opacity=0.8, line=dict(width=1, color="#fff")),
+                text=grp["Store Name"],
+                hovertemplate="<b>%{text}</b><br>Revenue: %{x:$,.0f}<br>GM: %{y:.1f}%<extra></extra>",
+            ))
         fig_sc.add_hline(y=st_agg["GM%"].mean(), line_dash="dot",
                          line_color=C["grey"], opacity=.5,
                          annotation_text="Avg GM%", annotation_position="right")
-        fig_sc.update_layout(height=360,
-                             xaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
-                             yaxis=dict(showgrid=True, gridcolor=C["grid"], ticksuffix="%"),
-                             **CHART)
+        fig_sc.update_layout(
+            title="Revenue vs Gross Margin % (bubble = revenue size)",
+            height=360,
+            xaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
+            yaxis=dict(showgrid=True, gridcolor=C["grid"], ticksuffix="%"),
+            legend=dict(orientation="h", y=-0.15),
+            **CHART)
         st.plotly_chart(fig_sc, use_container_width=True)
 
     # ══ Q2: Which stores are hitting their targets? ═══════════════════════════
