@@ -1587,19 +1587,27 @@ elif page == "Insights & Actions":
         outliers_i = pd.DataFrame()
 
     # ══════════════════════════════════════════════════════════════════
-    # CARD HELPER
+    # CARD HELPER — buffers per section, flushed sorted by severity
     # ══════════════════════════════════════════════════════════════════
+    _CARD_PRIORITY = {"🔴": 0, "🟡": 1, "🟢": 2, "🔵": 3}
+    _card_buf: list = []   # [(priority_int, icon, title, body, owner)]
+
     def card(icon, title, body, owner=None):
-        border = {"🔴":"#D13438","🟡":"#FF8C00","🟢":"#107C10","🔵":"#0078D4"}.get(icon, "#0078D4")
-        owner_html = (f'<span style="float:right;background:{border};color:#fff;'
-                      f'font-size:10px;padding:2px 8px;border-radius:10px;">{owner}</span>'
-                      if owner else "")
-        st.markdown(f"""
+        _card_buf.append((_CARD_PRIORITY.get(icon, 9), icon, title, body, owner))
+
+    def flush_cards():
+        for _, icon, title, body, owner in sorted(_card_buf, key=lambda x: x[0]):
+            border = {"🔴":"#D13438","🟡":"#FF8C00","🟢":"#107C10","🔵":"#0078D4"}.get(icon, "#0078D4")
+            owner_html = (f'<span style="float:right;background:{border};color:#fff;'
+                          f'font-size:10px;padding:2px 8px;border-radius:10px;">{owner}</span>'
+                          if owner else "")
+            st.markdown(f"""
 <div style="background:#FFFFFF;border-left:4px solid {border};border-radius:6px;
             padding:14px 18px;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);">
   <div style="font-size:13px;font-weight:700;color:#252423;">{owner_html}{icon} {title}</div>
   <div style="font-size:12px;color:#605E5C;margin-top:6px;line-height:1.7;">{body}</div>
 </div>""", unsafe_allow_html=True)
+        _card_buf.clear()
 
     # ══════════════════════════════════════════════════════════════════
     # SECTION 1 — SALES PERFORMANCE
@@ -1687,6 +1695,8 @@ elif page == "Insights & Actions":
              f"Promotional spend is controlled. Maintain guardrails and reward high-margin execution.",
              owner="Commercial Director")
 
+    flush_cards()
+
     # ══════════════════════════════════════════════════════════════════
     # SECTION 2 — STORE NETWORK
     # ══════════════════════════════════════════════════════════════════
@@ -1746,6 +1756,8 @@ elif page == "Insights & Actions":
              f"Escalate to monthly performance review with structured improvement plan.",
              owner="CEO / COO")
 
+    flush_cards()
+
     # ══════════════════════════════════════════════════════════════════
     # SECTION 3 — PRODUCT & CATEGORY
     # ══════════════════════════════════════════════════════════════════
@@ -1795,6 +1807,8 @@ elif page == "Insights & Actions":
              f"Build out secondary brand tier to reduce leverage concentration.",
              owner="Buying / Commercial Director")
 
+    flush_cards()
+
     # ── Return Rate signals ───────────────────────────────────────────
     st.markdown('<p class="sec-lbl">↩️ Returns</p>', unsafe_allow_html=True)
 
@@ -1828,6 +1842,8 @@ elif page == "Insights & Actions":
              f"Flag for product review; consider temporary suspension from active range.",
              owner="Buying")
 
+    flush_cards()
+
     # ── Revenue Anomalies ─────────────────────────────────────────────
     if not outliers_i.empty:
         st.markdown('<p class="sec-lbl">⚠️ Revenue Anomalies</p>', unsafe_allow_html=True)
@@ -1838,6 +1854,8 @@ elif page == "Insights & Actions":
                  f"Revenue of <b>{fmt(row['Net Sales'])}</b> is a statistical outlier (±1.5 IQR). "
                  f"Investigate: {'one-off promotional event or exceptional trading conditions' if direction=='spike' else 'supply disruption, planned store closure, or external market shock'}.",
                  owner="Commercial Director")
+
+    flush_cards()  # flush anomalies section
 
     # ══════════════════════════════════════════════════════════════════
     # PRIORITISED ACTION TABLE
@@ -1932,6 +1950,8 @@ elif page == "Insights & Actions":
         actions.append(("🟢 Good","All Signals","Dashboard signals are healthy — continue monitoring","All"))
 
     action_df = pd.DataFrame(actions, columns=["Priority","Area","Recommended Action","Owner"])
+    _order = {"🔴 Critical": 0, "🟡 Monitor": 1, "🟢 Good": 2}
+    action_df = action_df.sort_values("Priority", key=lambda s: s.map(_order).fillna(9)).reset_index(drop=True)
     st.dataframe(
         action_df.style
         .map(lambda v: "color:#D13438;font-weight:700" if "Critical" in str(v)
