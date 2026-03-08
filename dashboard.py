@@ -463,15 +463,32 @@ if page == "Executive Summary":
             footer="Orders = sales transactions only (returns excluded)"
         ), unsafe_allow_html=True)
 
-    # ── Country KPI strip (Geography) ─────────────────────────────────────────
+    # ── Geography donut ────────────────────────────────────────────────────────
     st.markdown('<p class="sec-lbl">Geography</p>', unsafe_allow_html=True)
     cnt = (sales.merge(store_raw[["Store ID","Store Country"]], on="Store ID", how="left")
            .groupby("Store Country")["Net Sales"].sum().reset_index()
            .sort_values("Net Sales", ascending=False))
     cnt["share"] = cnt["Net Sales"] / cnt["Net Sales"].sum() * 100
-    for col, (_, row) in zip(st.columns(len(cnt)), cnt.iterrows()):
-        col.metric(row["Store Country"], fmt(row["Net Sales"]),
-                   f"{row['share']:.0f}% of total")
+    cnt["label"] = cnt["Store Country"] + "<br>" + cnt["share"].apply(lambda v: f"{v:.1f}%")
+
+    fig_geo = go.Figure(go.Pie(
+        labels=cnt["Store Country"],
+        values=cnt["Net Sales"],
+        text=cnt["label"],
+        textinfo="text",
+        hovertemplate="<b>%{label}</b><br>Revenue: %{value:$,.0f}<br>Share: %{percent}<extra></extra>",
+        hole=0.55,
+        marker=dict(colors=[C["blue"], C["teal"], C["amber"], C["purple"]],
+                    line=dict(color="#FFFFFF", width=2)),
+        sort=False,
+    ))
+    fig_geo.add_annotation(text="Revenue<br>by Country", x=0.5, y=0.5,
+                           font=dict(size=12, color=C["grey"]), showarrow=False)
+    fig_geo.update_layout(height=280, showlegend=True,
+                          legend=dict(orientation="h", y=-0.1),
+                          margin=dict(t=10, b=10, l=10, r=10),
+                          **CHART)
+    st.plotly_chart(fig_geo, use_container_width=True)
 
     st.markdown('<p class="sec-lbl">Revenue Trend</p>', unsafe_allow_html=True)
 
