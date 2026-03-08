@@ -942,7 +942,7 @@ elif page == "Sales Performance":
 elif page == "Product & Category":
 
     st.markdown('<p class="pg-title">Product & Category</p>', unsafe_allow_html=True)
-    st.markdown('<p class="pg-sub">Bestsellers · Slow movers · Margin by category</p>', unsafe_allow_html=True)
+    st.markdown('<p class="pg-sub">What\'s selling · What\'s not · Where margin lives · What\'s being returned</p>', unsafe_allow_html=True)
 
     ps = sales.merge(product_raw, on="Product ID", how="left")
 
@@ -950,124 +950,216 @@ elif page == "Product & Category":
     prods = ps["Product ID"].nunique()
     avg_d = ps[ps["Order Type"]=="Sales"]["Discount"].mean() * 100
 
-    k1,k2,k3,k4,k5,k6,k7 = st.columns(7)
-    k1.metric("Gross Sales",    fmt(KP["gross_sales"]))
-    k2.metric("Net Sales",      fmt(KP["net_sales"]))
-    k3.metric("Gross Profit",   fmt(KP["gross_profit"]))
-    k4.metric("Profit Margin",  f"{KP['profit_margin']:.1f}%")
-    k5.metric("Return Rate",    f"{KP['return_rate']:.1f}%")
-    k6.metric("Unique SKUs",    f"{prods:,}")
-    k7.metric("Avg Discount",   f"{avg_d:.1f}%")
+    # ── Headline KPIs ─────────────────────────────────────────────────────────
+    h1,h2,h3,h4,h5 = st.columns(5)
+    def _pkpi(col, label, val, good=True):
+        color = C["green"] if good else C["red"]
+        col.markdown(f"""<div style='background:#fff;border-radius:8px;padding:12px 8px;
+            border:1px solid {C["border"]};text-align:center'>
+            <div style='font-size:11px;color:{C["grey"]};margin-bottom:4px'>{label}</div>
+            <div style='font-size:18px;font-weight:700;color:{color}'>{val}</div>
+        </div>""", unsafe_allow_html=True)
+    _pkpi(h1, "Net Sales",       fmt(KP["net_sales"]),             True)
+    _pkpi(h2, "Gross Margin",    f"{KP['profit_margin']:.1f}%",    KP["profit_margin"] >= 40)
+    _pkpi(h3, "Return Rate",     f"{KP['return_rate']:.1f}%",      KP["return_rate"] <= 15)
+    _pkpi(h4, "Active SKUs",     f"{prods:,}",                     True)
+    _pkpi(h5, "Avg Discount",    f"{avg_d:.1f}%",                  avg_d <= 15)
+    st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
 
-    st.markdown('<p class="sec-lbl">Category Overview</p>', unsafe_allow_html=True)
-    ct1, ct2 = st.columns([3,2])
-
-    with ct1:
-        sub = ps.groupby(["Category","Sub-Category"])["Net Sales"].sum().reset_index()
-        fig_tm = px.treemap(sub, path=["Category","Sub-Category"], values="Net Sales",
-                            color="Net Sales",
-                            color_continuous_scale=["#DBEAFE","#1D4ED8"],
-                            title="Revenue Treemap · Category → Sub-Category")
-        fig_tm.update_layout(height=360, **CHART)
-        st.plotly_chart(fig_tm, use_container_width=True)
-
-    with ct2:
-        cat = (ps.groupby("Category")
-               .agg(Net_Sales=("Net Sales","sum"), Net_Cost=("Net Cost","sum"))
-               .reset_index())
-        cat["GM%"] = (cat["Net_Sales"]-cat["Net_Cost"])/cat["Net_Sales"]*100
-        cat = cat.sort_values("Net_Sales", ascending=True)
-        cat["lbl"] = cat["Net_Sales"].apply(fmt)
-        fig_c = go.Figure()
-        fig_c.add_trace(go.Bar(y=cat["Category"], x=cat["Net_Sales"], orientation="h",
-                               name="Revenue", marker_color=C["blue"],
-                               text=cat["lbl"], textposition="outside"))
-        fig_c.add_trace(go.Scatter(y=cat["Category"], x=cat["GM%"],
-                                   mode="markers", name="GM %", xaxis="x2",
-                                   marker=dict(color=C["green"],size=11,symbol="diamond")))
-        fig_c.update_layout(
-            title="Revenue & GM% by Category",
-            height=360,
-            xaxis=dict(title="Revenue ($)", showgrid=True, gridcolor=C["grid"]),
-            xaxis2=dict(title="GM %", overlaying="x", side="top",
-                        ticksuffix="%", showgrid=False),
-            legend=dict(orientation="h", y=-0.15), **CHART)
-        st.plotly_chart(fig_c, use_container_width=True)
-
-    st.markdown('<p class="sec-lbl">Product Ranking</p>', unsafe_allow_html=True)
-
-    pa = (ps.groupby(["Product ID","Product Name","Category","Sub-Category",
-                       "Price Tier","Lifecycle","Product Image URL"])
-          .agg(Revenue=("Net Sales","sum"), Qty=("Net Qty","sum"),
-               Cost=("Net Cost","sum"))
-          .reset_index())
-    pa["GM%"] = (pa["Revenue"]-pa["Cost"])/pa["Revenue"]*100
-    pa = pa.sort_values("Revenue", ascending=False)
-
+    # ── Per-product aggregation ───────────────────────────────────────────────
     _CAT_EMOJI = {
         "Football":"⚽","Running":"👟","Tennis":"🎾","Cycling":"🚴",
         "Swimming":"🏊","Basketball":"🏀","Fitness":"💪","Outdoor":"🏔️",
         "Winter Sports":"⛷️","Team Sports":"🏅",
     }
+    pa = (ps[ps["Order Type"]=="Sales"]
+          .groupby(["Product ID","Product Name","Category","Sub-Category","Price Tier"])
+          .agg(Revenue=("Net Sales","sum"), Qty=("Net Qty","sum"), Cost=("Net Cost","sum"))
+          .reset_index())
+    pa_ret = (ps[ps["Order Type"]=="Return"]
+              .groupby("Product ID")["Sales"].sum().abs().reset_index()
+              .rename(columns={"Sales":"ReturnVal"}))
+    pa_gross = (ps[ps["Order Type"]=="Sales"]
+                .groupby("Product ID")["Sales"].sum().reset_index()
+                .rename(columns={"Sales":"GrossSales"}))
+    pa = pa.merge(pa_ret, on="Product ID", how="left").merge(pa_gross, on="Product ID", how="left")
+    pa["ReturnVal"]  = pa["ReturnVal"].fillna(0)
+    pa["GrossSales"] = pa["GrossSales"].fillna(pa["Revenue"])
+    pa["GM%"]        = ((pa["Revenue"] - pa["Cost"]) / pa["Revenue"] * 100).fillna(0)
+    pa["RetRate%"]   = (pa["ReturnVal"] / pa["GrossSales"] * 100).fillna(0)
+    pa = pa.sort_values("Revenue", ascending=False)
 
-    def render_prods(df_sub, header):
-        st.markdown(f"**{header}**")
-        for rank, (_, r) in enumerate(df_sub.iterrows(), 1):
-            a, b, c_ = st.columns([1,4,1])
-            with a:
-                emoji = _CAT_EMOJI.get(str(r.get("Category","")), "🏷️")
-                st.markdown(
-                    f'<div style="font-size:32px;text-align:center;padding:4px 0;">{emoji}</div>',
-                    unsafe_allow_html=True,
-                )
-            with b:
-                st.markdown(f"**#{rank} {r['Product Name']}**")
-                st.caption(f"{r['Category']} › {r['Sub-Category']}  ·  "
-                           f"{r['Price Tier']}  ·  {r['Lifecycle']}")
-            with c_:
-                st.markdown(f"**{fmt(r['Revenue'])}**")
-                st.caption(f"GM {r['GM%']:.0f}%  ·  {int(r['Qty']):,} units")
+    # ══ Q1: What's making us money? ══════════════════════════════════════════
+    st.markdown('<p class="sec-lbl">① What\'s making us money? — Top 10 Bestsellers</p>', unsafe_allow_html=True)
 
-    pb1, pb2 = st.columns(2)
-    with pb1:
-        render_prods(pa.head(10), "🏆 Top 10 Bestsellers")
-    with pb2:
-        slow = pa[pa["Revenue"] > 0].tail(10).sort_values("Revenue")
-        render_prods(slow, "🐢 Bottom 10 Slow Movers")
+    top10 = pa.head(10).copy()
+    top10["emoji"] = top10["Category"].map(lambda c: _CAT_EMOJI.get(c, "🏷️"))
+    top10["label"] = top10["emoji"] + " " + top10["Product Name"]
 
-    st.markdown('<p class="sec-lbl">Portfolio Mix</p>', unsafe_allow_html=True)
-    pm1, pm2, pm3 = st.columns(3)
+    fig_top = go.Figure()
+    fig_top.add_trace(go.Bar(
+        y=top10["label"], x=top10["Revenue"],
+        name="Revenue", marker_color=C["blue"], opacity=.85, orientation="h",
+        text=top10["Revenue"].apply(fmt), textposition="outside",
+    ))
+    fig_top.add_trace(go.Scatter(
+        y=top10["label"], x=top10["GM%"],
+        name="GM %", mode="markers", xaxis="x2",
+        marker=dict(color=C["green"], size=12, symbol="diamond",
+                    line=dict(width=1, color="#fff")),
+        text=top10["GM%"].apply(lambda v: f"{v:.0f}%"),
+        hovertemplate="GM: %{x:.1f}%<extra></extra>",
+    ))
+    fig_top.update_layout(
+        height=380,
+        xaxis=dict(showgrid=False, showticklabels=False, domain=[0, 0.75]),
+        xaxis2=dict(overlaying="x", side="top", ticksuffix="%",
+                    showgrid=False, range=[0, 100], domain=[0, 0.75]),
+        yaxis=dict(showgrid=False),
+        legend=dict(orientation="h", y=-0.08),
+        **CHART)
+    st.plotly_chart(fig_top, use_container_width=True)
 
-    with pm1:
-        pt = ps.groupby("Price Tier")["Net Sales"].sum().reset_index()
-        fig_pt = px.pie(pt, values="Net Sales", names="Price Tier",
-                        title="Revenue by Price Tier", hole=.45,
-                        color_discrete_sequence=[C["blue"],C["teal"],C["purple"]])
-        fig_pt.update_layout(height=240, **CHART)
+    # ══ Q2: What's costing us money? ══════════════════════════════════════════
+    st.markdown('<p class="sec-lbl">② What\'s costing us money? — Bottom 10 Slow Movers</p>', unsafe_allow_html=True)
+
+    slow10 = pa[pa["Revenue"] > 0].tail(10).sort_values("Revenue").copy()
+    slow10["emoji"] = slow10["Category"].map(lambda c: _CAT_EMOJI.get(c, "🏷️"))
+    slow10["label"] = slow10["emoji"] + " " + slow10["Product Name"]
+    slow10["gm_col"] = slow10["GM%"].apply(lambda v: C["red"] if v < 30 else C["amber"])
+
+    fig_slow = go.Figure()
+    fig_slow.add_trace(go.Bar(
+        y=slow10["label"], x=slow10["Revenue"],
+        name="Revenue", marker_color=C["red"], opacity=.7, orientation="h",
+        text=slow10["Revenue"].apply(fmt), textposition="outside",
+    ))
+    fig_slow.add_trace(go.Scatter(
+        y=slow10["label"], x=slow10["GM%"],
+        name="GM %", mode="markers", xaxis="x2",
+        marker=dict(color=slow10["gm_col"], size=12, symbol="diamond",
+                    line=dict(width=1, color="#fff")),
+        hovertemplate="GM: %{x:.1f}%<extra></extra>",
+    ))
+    fig_slow.update_layout(
+        height=360,
+        xaxis=dict(showgrid=False, showticklabels=False, domain=[0, 0.75]),
+        xaxis2=dict(overlaying="x", side="top", ticksuffix="%",
+                    showgrid=False, range=[0, 100], domain=[0, 0.75]),
+        yaxis=dict(showgrid=False),
+        legend=dict(orientation="h", y=-0.08),
+        **CHART)
+    st.plotly_chart(fig_slow, use_container_width=True)
+
+    # ══ Q3: Where does margin live? ═══════════════════════════════════════════
+    st.markdown('<p class="sec-lbl">③ Where does margin live? — Portfolio Concentration</p>', unsafe_allow_html=True)
+
+    p3a, p3b, p3c = st.columns(3)
+
+    with p3a:
+        cat = (ps[ps["Order Type"]=="Sales"]
+               .groupby("Category")
+               .agg(Revenue=("Net Sales","sum"), Cost=("Net Cost","sum"))
+               .reset_index().sort_values("Revenue", ascending=True))
+        cat["GM%"] = (cat["Revenue"] - cat["Cost"]) / cat["Revenue"] * 100
+        cat["share"] = cat["Revenue"] / cat["Revenue"].sum() * 100
+        cat["col"] = cat["GM%"].apply(lambda v: C["green"] if v >= 40 else C["amber"])
+        fig_cat = go.Figure()
+        fig_cat.add_trace(go.Bar(
+            y=cat["Category"], x=cat["Revenue"], orientation="h",
+            marker_color=C["blue"], opacity=.8, name="Revenue",
+            text=cat["share"].apply(lambda v: f"{v:.0f}%"), textposition="outside",
+        ))
+        fig_cat.add_trace(go.Scatter(
+            y=cat["Category"], x=cat["GM%"], mode="markers", xaxis="x2",
+            name="GM%", marker=dict(color=cat["col"], size=11, symbol="diamond"),
+        ))
+        fig_cat.update_layout(
+            title="Revenue & GM% by Category", height=300,
+            xaxis=dict(showgrid=False, showticklabels=False, domain=[0,0.72]),
+            xaxis2=dict(overlaying="x", side="top", ticksuffix="%",
+                        showgrid=False, range=[0,100], domain=[0,0.72]),
+            yaxis=dict(showgrid=False),
+            legend=dict(orientation="h", y=-0.12), **CHART)
+        st.plotly_chart(fig_cat, use_container_width=True)
+
+    with p3b:
+        pt = (ps[ps["Order Type"]=="Sales"]
+              .groupby("Price Tier")["Net Sales"].sum().reset_index()
+              .sort_values("Net Sales", ascending=True))
+        pt["share"] = pt["Net Sales"] / pt["Net Sales"].sum() * 100
+        fig_pt = go.Figure(go.Bar(
+            y=pt["Price Tier"], x=pt["Net Sales"], orientation="h",
+            marker_color=C["teal"], opacity=.85,
+            text=pt["share"].apply(lambda v: f"{v:.0f}%"), textposition="outside",
+        ))
+        fig_pt.update_layout(title="Revenue by Price Tier", height=300,
+                             xaxis=dict(showgrid=False, showticklabels=False),
+                             yaxis=dict(showgrid=False), **CHART)
         st.plotly_chart(fig_pt, use_container_width=True)
 
-    with pm2:
-        lc = (ps.groupby("Lifecycle")["Net Sales"].sum().reset_index()
-              .sort_values("Net Sales", ascending=False))
-        lc["lbl"] = lc["Net Sales"].apply(fmt)
-        fig_lc = go.Figure(go.Bar(x=lc["Lifecycle"], y=lc["Net Sales"],
-                                  text=lc["lbl"], textposition="outside",
-                                  marker_color=C["teal"]))
-        fig_lc.update_layout(title="Revenue by Lifecycle", height=240,
-                             yaxis=dict(showgrid=True, gridcolor=C["grid"],
-                                        tickprefix="$"), **CHART)
-        st.plotly_chart(fig_lc, use_container_width=True)
-
-    with pm3:
-        br = (ps.groupby("Brand")["Net Sales"].sum().reset_index()
+    with p3c:
+        br = (ps[ps["Order Type"]=="Sales"]
+              .groupby("Brand")["Net Sales"].sum().reset_index()
               .sort_values("Net Sales", ascending=False).head(8)
               .sort_values("Net Sales"))
-        fig_br = go.Figure(go.Bar(y=br["Brand"], x=br["Net Sales"],
-                                  orientation="h", marker_color=C["purple"]))
-        fig_br.update_layout(title="Top 8 Brands", height=240,
-                             xaxis=dict(showgrid=True, gridcolor=C["grid"],
-                                        tickprefix="$"), **CHART)
+        br["share"] = br["Net Sales"] / br["Net Sales"].sum() * 100
+        fig_br = go.Figure(go.Bar(
+            y=br["Brand"], x=br["Net Sales"], orientation="h",
+            marker_color=C["purple"], opacity=.85,
+            text=br["share"].apply(lambda v: f"{v:.0f}%"), textposition="outside",
+        ))
+        fig_br.update_layout(title="Top 8 Brands by Revenue", height=300,
+                             xaxis=dict(showgrid=False, showticklabels=False),
+                             yaxis=dict(showgrid=False), **CHART)
         st.plotly_chart(fig_br, use_container_width=True)
+
+    # ══ Q4: What's being returned? ════════════════════════════════════════════
+    st.markdown('<p class="sec-lbl">④ What\'s being returned? — Return Rate by Category</p>', unsafe_allow_html=True)
+
+    r4a, r4b = st.columns(2)
+
+    with r4a:
+        ret_cat = (ps.groupby(["Category","Order Type"])["Sales"].sum()
+                   .reset_index()
+                   .pivot_table(index="Category", columns="Order Type",
+                                values="Sales", fill_value=0)
+                   .reset_index())
+        if "Return" not in ret_cat.columns: ret_cat["Return"] = 0
+        if "Sales"  not in ret_cat.columns: ret_cat["Sales"]  = 0
+        ret_cat["RetRate%"] = ret_cat["Return"].abs() / ret_cat["Sales"] * 100
+        ret_cat = ret_cat.sort_values("RetRate%", ascending=True)
+        ret_cat["col"] = ret_cat["RetRate%"].apply(
+            lambda v: C["red"] if v > 25 else (C["amber"] if v > 15 else C["green"]))
+        fig_rcat = go.Figure(go.Bar(
+            y=ret_cat["Category"], x=ret_cat["RetRate%"], orientation="h",
+            marker_color=ret_cat["col"], opacity=.85,
+            text=ret_cat["RetRate%"].apply(lambda v: f"{v:.1f}%"), textposition="outside",
+        ))
+        fig_rcat.add_vline(x=20, line_dash="dash", line_color=C["red"], opacity=.5,
+                           annotation_text="20% alert", annotation_position="top")
+        fig_rcat.update_layout(title="Return Rate % by Category", height=300,
+                               xaxis=dict(showgrid=False, ticksuffix="%", showticklabels=False),
+                               yaxis=dict(showgrid=False), **CHART)
+        st.plotly_chart(fig_rcat, use_container_width=True)
+
+    with r4b:
+        # Top 10 most-returned products
+        top_ret = (pa.nlargest(10, "ReturnVal")
+                   [["Product Name","Category","ReturnVal","RetRate%"]].copy())
+        top_ret["emoji"] = top_ret["Category"].map(lambda c: _CAT_EMOJI.get(c, "🏷️"))
+        top_ret["label"] = top_ret["emoji"] + " " + top_ret["Product Name"]
+        top_ret = top_ret.sort_values("ReturnVal")
+        fig_tr = go.Figure(go.Bar(
+            y=top_ret["label"], x=top_ret["ReturnVal"], orientation="h",
+            marker_color=C["red"], opacity=.75,
+            text=top_ret["RetRate%"].apply(lambda v: f"{v:.0f}% ret"),
+            textposition="outside",
+        ))
+        fig_tr.update_layout(title="Top 10 Most-Returned Products (by $ value)", height=300,
+                             xaxis=dict(showgrid=False, tickprefix="$", showticklabels=False),
+                             yaxis=dict(showgrid=False), **CHART)
+        st.plotly_chart(fig_tr, use_container_width=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
