@@ -209,6 +209,50 @@ def fmt(v, mode="€"):
     return f"{s}{v:.1f}%"
 
 
+def calc_kpis(df, bgt=None):
+    """
+    Compute all 12 standard KPIs from a sales DataFrame.
+    AOV excludes return orders from the denominator (per spec).
+    """
+    s_rows = df[df["Order Type"] == "Sales"]
+    r_rows = df[df["Order Type"] == "Return"]
+
+    gross_sales   = s_rows["Sales"].sum()                       # KPI 1
+    return_sales  = r_rows["Sales"].sum()                       # KPI 2
+    net_sales     = gross_sales - abs(return_sales)             # KPI 3
+
+    cogs          = s_rows["Cost"].sum()                        # KPI 4
+    return_cost   = r_rows["Cost"].sum()                        # KPI 5
+    net_cogs      = cogs - abs(return_cost)                     # KPI 6
+
+    gross_profit  = net_sales - net_cogs                        # KPI 7
+    profit_margin = (gross_profit / net_sales * 100
+                     if net_sales else 0)                       # KPI 8
+
+    total_orders  = s_rows["Order ID"].nunique()                # KPI 9 — sales orders only
+    aov           = net_sales / total_orders if total_orders else 0  # KPI 10
+    units_per_ord = (s_rows["Quantity"].sum() / total_orders
+                     if total_orders else 0)                    # KPI 11
+
+    return_rate   = (abs(return_sales) / gross_sales * 100
+                     if gross_sales else 0)                     # KPI 12
+
+    out = dict(
+        gross_sales=gross_sales, return_sales=return_sales,
+        net_sales=net_sales, cogs=cogs, return_cost=return_cost,
+        net_cogs=net_cogs, gross_profit=gross_profit,
+        profit_margin=profit_margin, total_orders=total_orders,
+        aov=aov, units_per_order=units_per_ord,
+        return_rate=return_rate,
+    )
+    if bgt is not None:
+        tot_b = bgt["Budget Sales"].sum()
+        out["budget"]  = tot_b
+        out["vs_bgt"]  = (net_sales / tot_b - 1) * 100 if tot_b else 0
+        out["vs_bgt_abs"] = net_sales - tot_b
+    return out
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR  — navigation + filters
 # ══════════════════════════════════════════════════════════════════════════════
@@ -332,57 +376,59 @@ if page == "Executive Summary":
     st.markdown('<p class="pg-title">Executive Summary</p>', unsafe_allow_html=True)
     st.markdown('<p class="pg-sub">All figures net of returns · Filters apply globally</p>', unsafe_allow_html=True)
 
-    # ── KPIs ──────────────────────────────────────────────────────────────────
-    net_s  = sales["Net Sales"].sum()
-    net_c  = sales["Net Cost"].sum()
-    net_q  = int(sales["Net Qty"].sum())
-    gm     = (net_s - net_c) / net_s * 100 if net_s else 0
-    tot_b  = budget["Budget Sales"].sum()
-    vs_b   = (net_s / tot_b - 1) * 100 if tot_b else 0
-    ly     = ly_net_sales()
-    vs_ly  = (net_s / ly - 1) * 100 if ly else 0
-    gross  = sales.loc[sales["Order Type"]=="Sales","Sales"].sum()
-    ret    = sales.loc[sales["Order Type"]=="Return","Sales"].sum()
-    ret_rt = ret / gross * 100 if gross else 0
+    # ── KPIs via standardised calc_kpis() ─────────────────────────────────────
+    K   = calc_kpis(sales, budget)
+    ly  = ly_net_sales()
+    vs_ly = (K["net_sales"] / ly - 1) * 100 if ly else 0
 
-    # YTD: use months 1–latest month in selected period
-    max_month = sales["Month"].max() if not sales.empty else 12
-    ytd_sales  = sales[sales["Month"] <= max_month]["Net Sales"].sum()
-    ly_yrs_ytd = [y - 1 for y in sel_years]
-    ytd_ly     = sales_raw[
+    c1,c2,c3,c4,c5,c6,c7,c8 = st.columns(8)
+    c1.metric("Gross Sales",    fmt(K["gross_sales"]))
+    c2.metric("Net Sales",      fmt(K["net_sales"]),
+              delta=f"{fmt(vs_ly,'%')} vs LY",
+              delta_color="normal" if vs_ly >= 0 else "inverse")
+    c3.metric("vs Budget",      fmt(K["vs_bgt"],"%"),
+              delta=fmt(K["vs_bgt_abs"]),
+              delta_color="normal" if K["vs_bgt"] >= 0 else "inverse")
+    c4.metric("Gross Profit",   fmt(K["gross_profit"]))
+    c5.metric("Profit Margin",  f"{K['profit_margin']:.1f}%")
+    c6.metric("Total Orders",   f"{K['total_orders']:,}")
+    c7.metric("AOV",            fmt(K["aov"]))
+    c8.metric("Return Rate",    f"{K['return_rate']:.1f}%",
+              delta_color="inverse")
+
+    # ── 2nd KPI row ───────────────────────────────────────────────────────────
+    r1,r2,r3,r4 = st.columns(4)
+    r1.metric("Return Sales",   fmt(K["return_sales"]))
+    r2.metric("Net COGS",       fmt(K["net_cogs"]))
+    r3.metric("Units / Order",  f"{K['units_per_order']:.2f}")
+    r4.metric("LY Revenue",     fmt(ly))
+
+    # ── YTD strip ─────────────────────────────────────────────────────────────
+    max_month  = sales["Month"].max() if not sales.empty else 12
+    ytd_sales_df  = sales[sales["Month"] <= max_month]
+    ytd_bgt_df    = budget[budget["Month"] <= max_month]
+    ly_yrs_ytd    = [y - 1 for y in sel_years]
+    ytd_ly_df     = sales_raw[
         sales_raw["Year"].isin(ly_yrs_ytd) &
         sales_raw["Store ID"].isin(valid_stores) &
         sales_raw["Product ID"].isin(valid_prods) &
         (sales_raw["Month"] <= max_month)
-    ]["Net Sales"].sum()
-    ytd_bgt    = budget[budget["Month"] <= max_month]["Budget Sales"].sum()
-    vs_ytd_ly  = (ytd_sales / ytd_ly - 1) * 100 if ytd_ly else 0
-    vs_ytd_bgt = (ytd_sales / ytd_bgt - 1) * 100 if ytd_bgt else 0
+    ]
+    K_ytd    = calc_kpis(ytd_sales_df, ytd_bgt_df)
+    K_ytd_ly = calc_kpis(ytd_ly_df)
+    vs_ytd_ly  = (K_ytd["net_sales"] / K_ytd_ly["net_sales"] - 1) * 100 if K_ytd_ly["net_sales"] else 0
 
-    c1,c2,c3,c4,c5,c6 = st.columns(6)
-    c1.metric("Net Revenue",   fmt(net_s),
-              delta=f"{fmt(vs_ly,'%')} vs LY",
-              delta_color="normal" if vs_ly >= 0 else "inverse")
-    c2.metric("vs Budget",     fmt(vs_b,"%"),
-              delta=fmt(net_s - tot_b),
-              delta_color="normal" if vs_b >= 0 else "inverse")
-    c3.metric("Gross Margin",  f"{gm:.1f}%")
-    c4.metric("Units Sold",    f"{net_q:,}")
-    c5.metric("LY Revenue",    fmt(ly))
-    c6.metric("Return Rate",   f"{ret_rt:.1f}%",
-              delta_color="inverse")
-
-    # ── YTD strip ─────────────────────────────────────────────────────────────
     st.markdown('<p class="sec-lbl">YTD Time Intelligence (Jan → latest month in selection)</p>',
                 unsafe_allow_html=True)
-    y1,y2,y3 = st.columns(3)
-    y1.metric(f"YTD Revenue (M{max_month:02d})", fmt(ytd_sales),
+    y1,y2,y3,y4 = st.columns(4)
+    y1.metric(f"YTD Net Sales (M{max_month:02d})", fmt(K_ytd["net_sales"]),
               delta=f"{fmt(vs_ytd_ly,'%')} vs LY YTD",
               delta_color="normal" if vs_ytd_ly >= 0 else "inverse")
-    y2.metric("YTD vs Budget",  fmt(vs_ytd_bgt,"%"),
-              delta=fmt(ytd_sales - ytd_bgt),
-              delta_color="normal" if vs_ytd_bgt >= 0 else "inverse")
-    y3.metric("YTD LY",        fmt(ytd_ly))
+    y2.metric("YTD vs Budget",  fmt(K_ytd["vs_bgt"],"%"),
+              delta=fmt(K_ytd["vs_bgt_abs"]),
+              delta_color="normal" if K_ytd["vs_bgt"] >= 0 else "inverse")
+    y3.metric("YTD LY Net Sales", fmt(K_ytd_ly["net_sales"]))
+    y4.metric("YTD Profit Margin", f"{K_ytd['profit_margin']:.1f}%")
 
     st.markdown('<p class="sec-lbl">Revenue Trend</p>', unsafe_allow_html=True)
 
@@ -516,21 +562,18 @@ elif page == "Sales Performance":
     st.markdown('<p class="pg-title">Sales Performance</p>', unsafe_allow_html=True)
     st.markdown('<p class="pg-sub">Time intelligence · Budget variance · Returns · Discounts</p>', unsafe_allow_html=True)
 
-    net_s  = sales["Net Sales"].sum()
-    net_c  = sales["Net Cost"].sum()
-    gm     = (net_s - net_c) / net_s * 100 if net_s else 0
-    tot_b  = budget["Budget Sales"].sum()
-    vs_b   = (net_s / tot_b - 1) * 100 if tot_b else 0
-    ly     = ly_net_sales()
-    vs_ly  = (net_s / ly - 1) * 100 if ly else 0
-    avg_d  = sales["Discount"].mean() * 100
+    K2   = calc_kpis(sales, budget)
+    ly2  = ly_net_sales()
+    vs_ly2 = (K2["net_sales"] / ly2 - 1) * 100 if ly2 else 0
+    avg_d  = sales[sales["Order Type"]=="Sales"]["Discount"].mean() * 100
 
-    k1,k2,k3,k4,k5 = st.columns(5)
-    k1.metric("Net Revenue",  fmt(net_s))
-    k2.metric("Gross Margin", f"{gm:.1f}%")
-    k3.metric("vs Budget",    fmt(vs_b,"%"))
-    k4.metric("vs LY",        fmt(vs_ly,"%"))
-    k5.metric("Avg Discount", f"{avg_d:.1f}%")
+    k1,k2,k3,k4,k5,k6 = st.columns(6)
+    k1.metric("Net Sales",      fmt(K2["net_sales"]))
+    k2.metric("Gross Profit",   fmt(K2["gross_profit"]))
+    k3.metric("Profit Margin",  f"{K2['profit_margin']:.1f}%")
+    k4.metric("vs Budget",      fmt(K2["vs_bgt"],"%"))
+    k5.metric("vs LY",          fmt(vs_ly2,"%"))
+    k6.metric("Avg Discount",   f"{avg_d:.1f}%")
 
     st.markdown('<p class="sec-lbl">Monthly Budget Variance</p>', unsafe_allow_html=True)
 
@@ -949,17 +992,13 @@ elif page == "Insights & Actions":
     st.markdown('<p class="pg-sub">Rule-based recommendations derived from live dashboard data · Updated on every filter change</p>',
                 unsafe_allow_html=True)
 
-    # ── Compute signals ────────────────────────────────────────────────────────
-    net_s  = sales["Net Sales"].sum()
-    tot_b  = budget["Budget Sales"].sum()
-    vs_b   = (net_s / tot_b - 1) * 100 if tot_b else 0
-    ly     = ly_net_sales()
-    vs_ly  = (net_s / ly - 1) * 100 if ly else 0
-    gross  = sales.loc[sales["Order Type"]=="Sales","Sales"].sum()
-    ret    = sales.loc[sales["Order Type"]=="Return","Sales"].sum()
-    ret_rt = ret / gross * 100 if gross else 0
-    gm     = (net_s - sales["Net Cost"].sum()) / net_s * 100 if net_s else 0
-    avg_disc = sales["Discount"].mean() * 100
+    # ── Compute signals via standardised calc_kpis() ──────────────────────────
+    KI     = calc_kpis(sales, budget)
+    ly_i   = ly_net_sales()
+    vs_b   = KI["vs_bgt"]
+    vs_ly  = (KI["net_sales"] / ly_i - 1) * 100 if ly_i else 0
+    ret_rt = KI["return_rate"]
+    avg_disc = sales[sales["Order Type"]=="Sales"]["Discount"].mean() * 100
 
     # Store-level
     bgt_s  = budget.groupby("Store ID")["Budget Sales"].sum().reset_index()
@@ -971,6 +1010,7 @@ elif page == "Insights & Actions":
                                 "Store Channel","Store Status"]], on="Store ID", how="left")
               .merge(bgt_s, on="Store ID", how="left"))
     st_agg["vs_bgt"]  = (st_agg["Revenue"] / st_agg["Budget Sales"] - 1) * 100
+    # Gross Profit = Net Sales − Net COGS; GM% = Gross Profit / Net Sales
     st_agg["GM%"]     = (st_agg["Revenue"] - st_agg["Cost"]) / st_agg["Revenue"] * 100
 
     below_bgt = st_agg[st_agg["vs_bgt"] < -10].sort_values("vs_bgt")
@@ -1017,7 +1057,7 @@ elif page == "Insights & Actions":
 
     if vs_b < -10:
         card("🔴","🔴","Revenue Critically Below Budget",
-             f"Net revenue is <b>{fmt(vs_b,'%')}</b> vs budget ({fmt(net_s)} vs {fmt(tot_b)}). "
+             f"Net revenue is <b>{fmt(vs_b,'%')}</b> vs budget ({fmt(KI['net_sales'])} vs {fmt(KI['budget'])}). "
              f"Immediate review of pricing, campaign spend, and channel mix required.")
     elif vs_b < 0:
         card("🟡","🟡","Revenue Below Budget — Monitor Closely",
@@ -1034,7 +1074,7 @@ elif page == "Insights & Actions":
              f"Investigate whether this is market-driven, assortment-related, or store-specific.")
     elif vs_ly >= 5:
         card("🟢","🟢","Strong Year-on-Year Growth",
-             f"Revenue grew <b>{fmt(vs_ly,'%')}</b> vs prior year ({fmt(ly)} → {fmt(net_s)}). "
+             f"Revenue grew <b>{fmt(vs_ly,'%')}</b> vs prior year ({fmt(ly_i)} → {fmt(KI['net_sales'])}). "
              f"Identify best-practice stores and scale their playbook.")
 
     # ── Section: Store Actions ─────────────────────────────────────────────────
