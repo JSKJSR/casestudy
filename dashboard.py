@@ -443,8 +443,8 @@ if page == "Executive Summary":
         st.markdown(kpi_card(
             "vs Target", "#FF8C00",
             [
-                ("Budget",       fmt(K["budget"]),          False, "#252423"),
-                ("vs Budget",    f"{vs_bgt_arrow} {fmt(K['vs_bgt'],'%')}", True, vs_bgt_color),
+                ("Target",       fmt(K["budget"]),          False, "#252423"),
+                ("vs Target",    f"{vs_bgt_arrow} {fmt(K['vs_bgt'],'%')}", True, vs_bgt_color),
                 ("Variance $",   fmt(K["vs_bgt_abs"]),      False, vs_bgt_color),
                 ("LY Revenue",   fmt(ly),                   False, "#252423"),
             ],
@@ -475,7 +475,7 @@ if page == "Executive Summary":
 
     st.markdown('<p class="sec-lbl">Revenue Trend</p>', unsafe_allow_html=True)
 
-    # ── Quarterly Revenue vs Budget vs Last Year ──────────────────────────────
+    # ── Quarterly Revenue vs Target vs Last Year ──────────────────────────────
     # Quarter in sales is stored as "Q1","Q2"... so label = Year + " " + Quarter
     qa = (sales.groupby(["Year","Quarter"])["Net Sales"].sum().reset_index()
           .assign(Label=lambda d: d["Year"].astype(str) + " " + d["Quarter"].astype(str))
@@ -509,7 +509,7 @@ if page == "Executive Summary":
     ))
     fig.add_trace(go.Scatter(
         x=q_merged["Label"], y=q_merged["Budget Sales"].astype(float),
-        name="Budget", line=dict(color=C["amber"], width=2.5, dash="dash"),
+        name="Target", line=dict(color=C["amber"], width=2.5, dash="dash"),
         mode="lines+markers", marker=dict(size=7, color=C["amber"]),
         connectgaps=True,
     ))
@@ -520,7 +520,7 @@ if page == "Executive Summary":
         connectgaps=True,
     ))
     fig.update_layout(
-        title="Quarterly Net Revenue vs Budget vs Last Year",
+        title="Quarterly Net Revenue vs Target vs Last Year",
         height=340,
         legend=dict(orientation="h", y=-0.22),
         xaxis=dict(showgrid=False),
@@ -541,7 +541,7 @@ if page == "Executive Summary":
         fig2.add_trace(go.Bar(x=yy["Year"].astype(str), y=yy["Net Sales"],
                               name="Actual", marker_color=C["blue"]), secondary_y=False)
         fig2.add_trace(go.Bar(x=yy["Year"].astype(str), y=yy["Budget Sales"],
-                              name="Budget", marker_color=C["amber"], opacity=.45),
+                              name="Target", marker_color=C["amber"], opacity=.45),
                        secondary_y=False)
         fig2.add_trace(go.Scatter(x=yy["Year"].astype(str), y=yy["vs%"],
                                   name="vs Bgt %", mode="lines+markers+text",
@@ -549,7 +549,7 @@ if page == "Executive Summary":
                                   textposition="top center",
                                   line=dict(color=C["red"], width=2)),
                        secondary_y=True)
-        fig2.update_layout(title="Annual Actual vs Budget", barmode="group",
+        fig2.update_layout(title="Annual Actual vs Target", barmode="group",
                            height=280, legend=dict(orientation="h",y=-0.28), **CHART)
         fig2.update_yaxes(tickprefix="$", secondary_y=False,
                           showgrid=True, gridcolor=C["grid"])
@@ -609,11 +609,11 @@ elif page == "Sales Performance":
     k1.metric("Net Sales",      fmt(K2["net_sales"]))
     k2.metric("Gross Profit",   fmt(K2["gross_profit"]))
     k3.metric("Profit Margin",  f"{K2['profit_margin']:.1f}%")
-    k4.metric("vs Budget",      fmt(K2["vs_bgt"],"%"))
+    k4.metric("vs Target",      fmt(K2["vs_bgt"],"%"))
     k5.metric("vs LY",          fmt(vs_ly2,"%"))
     k6.metric("Avg Discount",   f"{avg_d:.1f}%")
 
-    st.markdown('<p class="sec-lbl">Monthly Budget Variance</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sec-lbl">Monthly Target Variance</p>', unsafe_allow_html=True)
 
     ma2 = (sales.groupby(["Year","Month"])["Net Sales"].sum().reset_index()
            .assign(Date=lambda d: pd.to_datetime(d[["Year","Month"]].assign(day=1))))
@@ -632,7 +632,7 @@ elif page == "Sales Performance":
                                line=dict(color=C["navy"], width=1.5)))
     fig_v.add_hline(y=0, line_color="#374151", line_width=1)
     fig_v.update_layout(
-        title="Monthly Revenue Variance vs Budget  (bar = $, line = %)",
+        title="Monthly Revenue Variance vs Target  (bar = $, line = %)",
         height=290,
         yaxis=dict(title="$ Variance", showgrid=True, gridcolor=C["grid"], tickprefix="$"),
         yaxis2=dict(title="% Variance", overlaying="y", side="right",
@@ -939,7 +939,7 @@ elif page == "Store Network":
     k6.metric("Avg AOV",        f"${st_agg['AOV'].mean():.0f}")
     k7.metric("Avg $/SQM",      f"${st_agg['Sales/SQM'].mean():.0f}")
 
-    st.markdown('<p class="sec-lbl">Store vs Budget</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sec-lbl">Store vs Target</p>', unsafe_allow_html=True)
     cs1, cs2 = st.columns([3,2])
 
     with cs1:
@@ -949,10 +949,10 @@ elif page == "Store Network":
                                 name="Actual", orientation="h",
                                 marker_color=C["blue"]))
         fig_sb.add_trace(go.Bar(y=top["Store Name"], x=top["Budget Sales"],
-                                name="Budget", orientation="h",
+                                name="Target", orientation="h",
                                 marker_color=C["amber"], opacity=.4))
         fig_sb.update_layout(
-            title="Store Revenue: Actual vs Budget",
+            title="Store Revenue: Actual vs Target",
             barmode="overlay", height=500,
             legend=dict(orientation="h", y=-0.08),
             xaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
@@ -964,7 +964,7 @@ elif page == "Store Network":
             st_agg, x="Sales/SQM", y="vs Bgt%",
             size="Revenue", color="Store Country",
             hover_name="Store Name",
-            title="Efficiency · $/SQM vs vs Budget %",
+            title="Efficiency · $/SQM vs Target %",
             size_max=42,
             color_discrete_sequence=[C["blue"],C["amber"],C["green"],C["purple"]],
         )
@@ -1039,12 +1039,12 @@ elif page == "Store Network":
                   "vs Bgt%","GrossProfit","GM%","ReturnRate%",
                   "AOV","Units/Order","Sales/SQM"]].copy()
     tbl.columns = ["Store","Country","Channel","Format","Status",
-                   "Gross Sales","Net Sales","Budget","vs Bgt%",
+                   "Gross Sales","Net Sales","Target","vs Bgt%",
                    "Gross Profit","GM%","Return Rate%","AOV","Units/Order","$/SQM"]
     st.dataframe(
         tbl.style
         .format({"Gross Sales":"${:,.0f}","Net Sales":"${:,.0f}",
-                 "Budget":"${:,.0f}","vs Bgt%":"{:+.1f}%",
+                 "Target":"${:,.0f}","vs Bgt%":"{:+.1f}%",
                  "Gross Profit":"${:,.0f}","GM%":"{:.1f}%",
                  "Return Rate%":"{:.1f}%","AOV":"${:.0f}",
                  "Units/Order":"{:.2f}","$/SQM":"${:.0f}"})
@@ -1233,8 +1233,8 @@ elif page == "Insights & Actions":
     st.markdown('<p class="sec-lbl">Prioritised Action Summary</p>', unsafe_allow_html=True)
 
     actions = []
-    if vs_b < -10:          actions.append(("🔴 Critical","Revenue vs Budget","Activate recovery plan: pricing, promotions, store reviews","CFO / Commercial Director"))
-    elif vs_b < 0:          actions.append(("🟡 Monitor","Revenue vs Budget","Weekly budget variance review with area managers","Commercial Director"))
+    if vs_b < -10:          actions.append(("🔴 Critical","Revenue vs Target","Activate recovery plan: pricing, promotions, store reviews","CFO / Commercial Director"))
+    elif vs_b < 0:          actions.append(("🟡 Monitor","Revenue vs Target","Weekly target variance review with area managers","Commercial Director"))
     if vs_ly < -5:          actions.append(("🔴 Critical","YoY Growth","Root-cause analysis of YoY decline by country and channel","CEO / Strategy"))
     if not below_bgt.empty: actions.append(("🔴 Critical","Store Performance",f"Area manager reviews for {len(below_bgt)} underperforming stores","Area Managers"))
     if not low_gm.empty:    actions.append(("🟡 Monitor","Store Margin",f"Margin improvement plans for {len(low_gm)} low-GM stores","Finance / Ops"))
