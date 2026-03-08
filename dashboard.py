@@ -2,6 +2,7 @@
 Intersport · C-Suite Sales Dashboard
 Power BI-style · Streamlit · Self-contained (synthetic data, no upload needed)
 """
+import time
 import warnings
 import numpy as np
 import pandas as pd
@@ -345,7 +346,9 @@ def generate_data():
 
 
 # load once
+_t0 = time.perf_counter()
 DATA = generate_data()
+_load_ms = (time.perf_counter() - _t0) * 1000
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS
@@ -384,7 +387,8 @@ with st.sidebar:
 
     page = st.radio(
         "nav", ["Executive Summary","Sales Performance",
-                "Product & Category","Store Network"],
+                "Product & Category","Store Network",
+                "Insights & Actions"],
         label_visibility="collapsed",
     )
 
@@ -404,6 +408,35 @@ with st.sidebar:
     sel_countries= st.multiselect("Country",  all_countries, default=all_countries)
     sel_channels = st.multiselect("Channel",  all_channels,  default=all_channels)
     sel_cats     = st.multiselect("Category", all_cats,      default=all_cats)
+
+    # ── Technical Performance Panel ───────────────────────────────────────────
+    with st.expander("⚙️ Technical Performance", expanded=False):
+        _sr = DATA["sales"]
+        _br = DATA["budget"]
+        _st = DATA["store"]
+        _pr = DATA["product"]
+        _cr = DATA["customer"]
+        st.markdown(f"""
+<div style="font-size:11px;line-height:1.8;color:#252423;">
+<b>Data Load</b><br>
+⏱ <b>{_load_ms:.0f} ms</b> (cached after first run)<br>
+💾 Cache: <code>@st.cache_data</code> active<br>
+<br><b>Dataset Sizes</b><br>
+📦 Sales rows: <b>{len(_sr):,}</b><br>
+💰 Budget rows: <b>{len(_br):,}</b><br>
+🏪 Stores: <b>{_st['Store ID'].nunique()}</b><br>
+🛍 SKUs: <b>{_pr['Product ID'].nunique():,}</b><br>
+👤 Customers: <b>{_cr['Customer ID'].nunique():,}</b><br>
+<br><b>Date Range</b><br>
+📅 {_sr['Order Date'].min().date()} → {_sr['Order Date'].max().date()}<br>
+<br><b>Data Quality</b><br>
+✅ Null sales: {_sr['Net Sales'].isna().sum()}<br>
+✅ Null qty: {_sr['Net Qty'].isna().sum()}<br>
+✅ Orphan orders: {_sr[~_sr['Store ID'].isin(_st['Store ID'])].shape[0]}<br>
+✅ Orphan products: {_sr[~_sr['Product ID'].isin(_pr['Product ID'])].shape[0]}<br>
+<br><b>Return Rate</b><br>
+↩ {(_sr[_sr['Order Type']=='Return']['Sales'].sum() / _sr[_sr['Order Type']=='Sales']['Sales'].sum() * 100):.2f}% of gross sales<br>
+</div>""", unsafe_allow_html=True)
 
     st.markdown(
         '<p style="font-size:10px;color:#A19F9D;margin-top:24px;">'
@@ -465,6 +498,20 @@ if page == "Executive Summary":
     ret    = sales.loc[sales["Order Type"]=="Return","Sales"].sum()
     ret_rt = ret / gross * 100 if gross else 0
 
+    # YTD: use months 1–latest month in selected period
+    max_month = sales["Month"].max() if not sales.empty else 12
+    ytd_sales  = sales[sales["Month"] <= max_month]["Net Sales"].sum()
+    ly_yrs_ytd = [y - 1 for y in sel_years]
+    ytd_ly     = sales_raw[
+        sales_raw["Year"].isin(ly_yrs_ytd) &
+        sales_raw["Store ID"].isin(valid_stores) &
+        sales_raw["Product ID"].isin(valid_prods) &
+        (sales_raw["Month"] <= max_month)
+    ]["Net Sales"].sum()
+    ytd_bgt    = budget[budget["Month"] <= max_month]["Budget Sales"].sum()
+    vs_ytd_ly  = (ytd_sales / ytd_ly - 1) * 100 if ytd_ly else 0
+    vs_ytd_bgt = (ytd_sales / ytd_bgt - 1) * 100 if ytd_bgt else 0
+
     c1,c2,c3,c4,c5,c6 = st.columns(6)
     c1.metric("Net Revenue",   fmt(net_s),
               delta=f"{fmt(vs_ly,'%')} vs LY",
@@ -477,6 +524,18 @@ if page == "Executive Summary":
     c5.metric("LY Revenue",    fmt(ly))
     c6.metric("Return Rate",   f"{ret_rt:.1f}%",
               delta_color="inverse")
+
+    # ── YTD strip ─────────────────────────────────────────────────────────────
+    st.markdown('<p class="sec-lbl">YTD Time Intelligence (Jan → latest month in selection)</p>',
+                unsafe_allow_html=True)
+    y1,y2,y3 = st.columns(3)
+    y1.metric(f"YTD Revenue (M{max_month:02d})", fmt(ytd_sales),
+              delta=f"{fmt(vs_ytd_ly,'%')} vs LY YTD",
+              delta_color="normal" if vs_ytd_ly >= 0 else "inverse")
+    y2.metric("YTD vs Budget",  fmt(vs_ytd_bgt,"%"),
+              delta=fmt(ytd_sales - ytd_bgt),
+              delta_color="normal" if vs_ytd_bgt >= 0 else "inverse")
+    y3.metric("YTD LY",        fmt(ytd_ly))
 
     st.markdown('<p class="sec-lbl">Revenue Trend</p>', unsafe_allow_html=True)
 
@@ -494,6 +553,14 @@ if page == "Executive Summary":
           .assign(Date=lambda d: pd.to_datetime(d[["Year","Month"]].assign(day=1))
                                  + pd.DateOffset(years=1)))
 
+    # Outlier detection: flag months > 1.5 IQR from Q1/Q3
+    if len(ma) >= 4:
+        q1, q3 = ma["Net Sales"].quantile([0.25, 0.75])
+        iqr = q3 - q1
+        _outliers = ma[(ma["Net Sales"] < q1 - 1.5*iqr) | (ma["Net Sales"] > q3 + 1.5*iqr)]
+    else:
+        _outliers = pd.DataFrame()
+
     fig = go.Figure()
     fig.add_trace(go.Bar(x=ma["Date"], y=ma["Net Sales"],
                          name="Actual", marker_color=C["blue"], opacity=.85))
@@ -504,8 +571,17 @@ if page == "Executive Summary":
         fig.add_trace(go.Scatter(x=ml["Date"], y=ml["Net Sales"],
                                  name="Prior Year",
                                  line=dict(color=C["grey"], width=1.5, dash="dot")))
-    fig.update_layout(title="Monthly Net Revenue · Actual vs Budget vs Prior Year",
-                      height=310, barmode="overlay",
+    if not _outliers.empty:
+        fig.add_trace(go.Scatter(
+            x=_outliers["Date"], y=_outliers["Net Sales"],
+            mode="markers+text",
+            name="⚠ Outlier",
+            marker=dict(color=C["red"], size=12, symbol="circle-open", line=dict(width=2)),
+            text=_outliers["Net Sales"].apply(fmt),
+            textposition="top center",
+        ))
+    fig.update_layout(title="Monthly Net Revenue · Actual vs Budget vs Prior Year  (⚠ = statistical outlier ±1.5 IQR)",
+                      height=320, barmode="overlay",
                       legend=dict(orientation="h", y=-0.22),
                       xaxis=dict(showgrid=False),
                       yaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="€"),
@@ -806,13 +882,22 @@ elif page == "Product & Category":
     pa["GM%"] = (pa["Revenue"]-pa["Cost"])/pa["Revenue"]*100
     pa = pa.sort_values("Revenue", ascending=False)
 
+    _CAT_EMOJI = {
+        "Football":"⚽","Running":"👟","Tennis":"🎾","Cycling":"🚴",
+        "Swimming":"🏊","Basketball":"🏀","Fitness":"💪","Outdoor":"🏔️",
+        "Winter Sports":"⛷️","Team Sports":"🏅",
+    }
+
     def render_prods(df_sub, header):
         st.markdown(f"**{header}**")
         for rank, (_, r) in enumerate(df_sub.iterrows(), 1):
             a, b, c_ = st.columns([1,4,1])
             with a:
-                try:    st.image(r["Product Image URL"], width=48)
-                except: st.write("🖼️")
+                emoji = _CAT_EMOJI.get(str(r.get("Category","")), "🏷️")
+                st.markdown(
+                    f'<div style="font-size:32px;text-align:center;padding:4px 0;">{emoji}</div>',
+                    unsafe_allow_html=True,
+                )
             with b:
                 st.markdown(f"**#{rank} {r['Product Name']}**")
                 st.caption(f"{r['Category']} › {r['Sub-Category']}  ·  "
@@ -1004,6 +1089,209 @@ elif page == "Store Network":
         .background_gradient(subset=["Revenue"], cmap="Blues")
         .map(lambda v: f"color:{'green' if v>=0 else 'red'}"
              if isinstance(v,(int,float)) else "", subset=["vs Bgt%"]),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ██  PAGE 5 — INSIGHTS & ACTIONS
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "Insights & Actions":
+
+    st.markdown('<p class="pg-title">Insights & Actions</p>', unsafe_allow_html=True)
+    st.markdown('<p class="pg-sub">Rule-based recommendations derived from live dashboard data · Updated on every filter change</p>',
+                unsafe_allow_html=True)
+
+    # ── Compute signals ────────────────────────────────────────────────────────
+    net_s  = sales["Net Sales"].sum()
+    tot_b  = budget["Budget Sales"].sum()
+    vs_b   = (net_s / tot_b - 1) * 100 if tot_b else 0
+    ly     = ly_net_sales()
+    vs_ly  = (net_s / ly - 1) * 100 if ly else 0
+    gross  = sales.loc[sales["Order Type"]=="Sales","Sales"].sum()
+    ret    = sales.loc[sales["Order Type"]=="Return","Sales"].sum()
+    ret_rt = ret / gross * 100 if gross else 0
+    gm     = (net_s - sales["Net Cost"].sum()) / net_s * 100 if net_s else 0
+    avg_disc = sales["Discount"].mean() * 100
+
+    # Store-level
+    bgt_s  = budget.groupby("Store ID")["Budget Sales"].sum().reset_index()
+    st_agg = (sales.groupby("Store ID")
+              .agg(Revenue=("Net Sales","sum"), Cost=("Net Cost","sum"),
+                   Qty=("Net Qty","sum"), Txn=("Order ID","nunique"))
+              .reset_index()
+              .merge(store_raw[["Store ID","Store Name","Store Country",
+                                "Store Channel","Store Status"]], on="Store ID", how="left")
+              .merge(bgt_s, on="Store ID", how="left"))
+    st_agg["vs_bgt"]  = (st_agg["Revenue"] / st_agg["Budget Sales"] - 1) * 100
+    st_agg["GM%"]     = (st_agg["Revenue"] - st_agg["Cost"]) / st_agg["Revenue"] * 100
+
+    below_bgt = st_agg[st_agg["vs_bgt"] < -10].sort_values("vs_bgt")
+    above_bgt = st_agg[st_agg["vs_bgt"] > 15].sort_values("vs_bgt", ascending=False)
+    low_gm    = st_agg[st_agg["GM%"] < 30].sort_values("GM%")
+
+    # Category YoY
+    ps = sales.merge(product_raw, on="Product ID", how="left")
+    cat_yr = (sales_raw.merge(product_raw[["Product ID","Category"]], on="Product ID", how="left")
+              .groupby(["Category","Year"])["Net Sales"].sum().reset_index())
+    if len(sel_years) >= 1:
+        cur_yr  = max(sel_years)
+        prev_yr = cur_yr - 1
+        cat_cur  = cat_yr[cat_yr["Year"]==cur_yr].rename(columns={"Net Sales":"cur"})
+        cat_prev = cat_yr[cat_yr["Year"]==prev_yr].rename(columns={"Net Sales":"prev"})
+        cat_yoy  = cat_cur.merge(cat_prev, on="Category", how="outer").fillna(0)
+        cat_yoy["yoy%"] = (cat_yoy["cur"] / cat_yoy["prev"] - 1) * 100
+        cat_decline = cat_yoy[(cat_yoy["yoy%"] < -5) & (cat_yoy["prev"] > 0)].sort_values("yoy%")
+    else:
+        cat_decline = pd.DataFrame()
+
+    # Monthly outliers
+    ma_i = (sales.groupby(["Year","Month"])["Net Sales"].sum().reset_index()
+            .assign(Date=lambda d: pd.to_datetime(d[["Year","Month"]].assign(day=1)))
+            .sort_values("Date"))
+    if len(ma_i) >= 4:
+        q1i, q3i = ma_i["Net Sales"].quantile([0.25, 0.75])
+        iqri = q3i - q1i
+        outliers_i = ma_i[(ma_i["Net Sales"] < q1i - 1.5*iqri) | (ma_i["Net Sales"] > q3i + 1.5*iqri)]
+    else:
+        outliers_i = pd.DataFrame()
+
+    def card(color, icon, title, body):
+        border = {"🔴":"#D13438","🟡":"#FF8C00","🟢":"#107C10"}.get(icon, "#0078D4")
+        st.markdown(f"""
+<div style="background:#FFFFFF;border-left:4px solid {border};border-radius:6px;
+            padding:14px 18px;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);">
+  <div style="font-size:13px;font-weight:700;color:#252423;">{icon} {title}</div>
+  <div style="font-size:12px;color:#605E5C;margin-top:4px;line-height:1.6;">{body}</div>
+</div>""", unsafe_allow_html=True)
+
+    # ── Section: Revenue vs Target ─────────────────────────────────────────────
+    st.markdown('<p class="sec-lbl">Revenue vs Target</p>', unsafe_allow_html=True)
+
+    if vs_b < -10:
+        card("🔴","🔴","Revenue Critically Below Budget",
+             f"Net revenue is <b>{fmt(vs_b,'%')}</b> vs budget ({fmt(net_s)} vs {fmt(tot_b)}). "
+             f"Immediate review of pricing, campaign spend, and channel mix required.")
+    elif vs_b < 0:
+        card("🟡","🟡","Revenue Below Budget — Monitor Closely",
+             f"Net revenue is <b>{fmt(vs_b,'%')}</b> vs budget. "
+             f"Review underperforming stores and activate promotional levers.")
+    else:
+        card("🟢","🟢","Revenue On or Ahead of Budget",
+             f"Net revenue is <b>{fmt(vs_b,'%')}</b> vs budget. "
+             f"Sustain momentum; consider raising Q4 budget targets.")
+
+    if vs_ly < -5:
+        card("🔴","🔴","Year-on-Year Revenue Declining",
+             f"Revenue is <b>{fmt(vs_ly,'%')}</b> vs prior year. "
+             f"Investigate whether this is market-driven, assortment-related, or store-specific.")
+    elif vs_ly >= 5:
+        card("🟢","🟢","Strong Year-on-Year Growth",
+             f"Revenue grew <b>{fmt(vs_ly,'%')}</b> vs prior year ({fmt(ly)} → {fmt(net_s)}). "
+             f"Identify best-practice stores and scale their playbook.")
+
+    # ── Section: Store Actions ─────────────────────────────────────────────────
+    st.markdown('<p class="sec-lbl">Store Actions</p>', unsafe_allow_html=True)
+
+    if not below_bgt.empty:
+        names = ", ".join(below_bgt["Store Name"].head(3).tolist())
+        card("🔴","🔴",f"{len(below_bgt)} Store(s) >10% Below Budget",
+             f"<b>{names}</b> and {max(0,len(below_bgt)-3)} others are materially missing budget. "
+             f"Assign area manager reviews, check local trading conditions and competitor activity.")
+    if not above_bgt.empty:
+        names2 = ", ".join(above_bgt["Store Name"].head(3).tolist())
+        card("🟢","🟢",f"{len(above_bgt)} Store(s) >15% Above Budget",
+             f"<b>{names2}</b> are significantly outperforming. "
+             f"Share best practices, consider budget uplift, and explore local replication.")
+    if not low_gm.empty:
+        names3 = ", ".join(low_gm["Store Name"].head(3).tolist())
+        card("🟡","🟡",f"{len(low_gm)} Store(s) with Gross Margin < 30%",
+             f"<b>{names3}</b> have margin pressure. Review discount authorisation levels "
+             f"and cost allocations.")
+
+    # ── Section: Product & Category ────────────────────────────────────────────
+    st.markdown('<p class="sec-lbl">Product & Category</p>', unsafe_allow_html=True)
+
+    if not cat_decline.empty:
+        dec_list = ", ".join(
+            f"{r['Category']} ({r['yoy%']:+.0f}%)"
+            for _, r in cat_decline.head(3).iterrows()
+        )
+        card("🟡","🟡","Declining Categories — Action Needed",
+             f"YoY decline in: <b>{dec_list}</b>. "
+             f"Review assortment relevance, pricing vs competitors, and in-store presentation.")
+
+    slow_gm = ps.groupby("Product ID").agg(
+        Revenue=("Net Sales","sum"), Cost=("Net Cost","sum"),
+        Name=("Product Name","first")
+    ).reset_index()
+    slow_gm["GM%"] = (slow_gm["Revenue"] - slow_gm["Cost"]) / slow_gm["Revenue"] * 100
+    neg_gm_prods = slow_gm[slow_gm["GM%"] < 0]
+    if not neg_gm_prods.empty:
+        card("🔴","🔴",f"{len(neg_gm_prods)} SKU(s) with Negative Gross Margin",
+             f"These products are selling below cost. Review pricing, clearance strategy, "
+             f"or discontinue if lifecycle is End-of-Life.")
+
+    if avg_disc > 15:
+        card("🟡","🟡",f"Average Discount at {avg_disc:.1f}% — Review Promotional Strategy",
+             f"High blanket discounting erodes margin. Shift to targeted, customer-segment "
+             f"promotions and enforce discount approval thresholds.")
+    else:
+        card("🟢","🟢",f"Discount Level Controlled at {avg_disc:.1f}%",
+             f"Promotional discipline is sound. Maintain guardrails and reward high-margin sales.")
+
+    # ── Section: Returns ───────────────────────────────────────────────────────
+    st.markdown('<p class="sec-lbl">Returns</p>', unsafe_allow_html=True)
+
+    if ret_rt > 12:
+        card("🔴","🔴",f"Return Rate {ret_rt:.1f}% — Requires Immediate Investigation",
+             f"Return rate above 12% threshold. Investigate product quality issues, "
+             f"sizing accuracy, misleading product descriptions, and channel-specific patterns.")
+    elif ret_rt > 8:
+        card("🟡","🟡",f"Return Rate {ret_rt:.1f}% — Elevated",
+             f"Monitor closely. Identify top-returning SKUs and channels. "
+             f"Ensure return data feeds back into buying decisions.")
+    else:
+        card("🟢","🟢",f"Return Rate {ret_rt:.1f}% — Healthy",
+             f"Returns are within acceptable range. Continue monitoring for seasonal spikes.")
+
+    # ── Section: Trend Anomalies ───────────────────────────────────────────────
+    st.markdown('<p class="sec-lbl">Trend Anomalies Detected</p>', unsafe_allow_html=True)
+
+    if not outliers_i.empty:
+        for _, row in outliers_i.iterrows():
+            direction = "spike" if row["Net Sales"] > ma_i["Net Sales"].median() else "dip"
+            month_lbl = row["Date"].strftime("%b %Y")
+            card("🟡","🟡",f"Statistical {direction.title()} in {month_lbl}",
+                 f"Revenue of <b>{fmt(row['Net Sales'])}</b> is an outlier (±1.5 IQR). "
+                 f"Investigate {'one-off promotional event or exceptional trading conditions' if direction=='spike' else 'supply disruption, store closure, or external shock'}.")
+    else:
+        card("🟢","🟢","No Statistical Outliers Detected",
+             "Monthly revenue is tracking within normal bounds for the selected period.")
+
+    # ── Section: Prioritised Action Table ─────────────────────────────────────
+    st.markdown('<p class="sec-lbl">Prioritised Action Summary</p>', unsafe_allow_html=True)
+
+    actions = []
+    if vs_b < -10:          actions.append(("🔴 Critical","Revenue vs Budget","Activate recovery plan: pricing, promotions, store reviews","CFO / Commercial Director"))
+    elif vs_b < 0:          actions.append(("🟡 Monitor","Revenue vs Budget","Weekly budget variance review with area managers","Commercial Director"))
+    if vs_ly < -5:          actions.append(("🔴 Critical","YoY Growth","Root-cause analysis of YoY decline by country and channel","CEO / Strategy"))
+    if not below_bgt.empty: actions.append(("🔴 Critical","Store Performance",f"Area manager reviews for {len(below_bgt)} underperforming stores","Area Managers"))
+    if not low_gm.empty:    actions.append(("🟡 Monitor","Store Margin",f"Margin improvement plans for {len(low_gm)} low-GM stores","Finance / Ops"))
+    if not cat_decline.empty: actions.append(("🟡 Monitor","Category Mix","Assortment refresh for declining categories","Buying / Merchandising"))
+    if not neg_gm_prods.empty: actions.append(("🔴 Critical","Negative GM SKUs",f"Clearance or discontinuation of {len(neg_gm_prods)} loss-making SKUs","Buying"))
+    if avg_disc > 15:       actions.append(("🟡 Monitor","Discounting","Implement discount approval guardrails","Commercial Director"))
+    if ret_rt > 12:         actions.append(("🔴 Critical","Return Rate","Launch quality/product accuracy investigation","Quality / Ops"))
+    elif ret_rt > 8:        actions.append(("🟡 Monitor","Return Rate","Monthly returns SKU analysis","Buying"))
+    if not outliers_i.empty: actions.append(("🟡 Monitor","Revenue Anomalies",f"Investigate {len(outliers_i)} outlier month(s)","Commercial Director"))
+    if not actions:         actions.append(("🟢 Good","All KPIs","Dashboard signals are healthy — continue monitoring","All"))
+
+    action_df = pd.DataFrame(actions, columns=["Priority","Area","Recommended Action","Owner"])
+    st.dataframe(
+        action_df.style
+        .map(lambda v: "color:#D13438;font-weight:700" if "Critical" in str(v)
+             else ("color:#FF8C00;font-weight:700" if "Monitor" in str(v)
+             else "color:#107C10;font-weight:700"), subset=["Priority"]),
         use_container_width=True,
         hide_index=True,
     )
