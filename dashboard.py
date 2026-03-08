@@ -465,67 +465,48 @@ if page == "Executive Summary":
 
     st.markdown('<p class="sec-lbl">Revenue Trend</p>', unsafe_allow_html=True)
 
-    # ── Monthly Actual (by Store Channel) vs Budget vs LY ────────────────────
-    sales_ch = sales.merge(store_raw[["Store ID","Store Channel"]], on="Store ID", how="left")
+    # ── Quarterly Revenue vs Target vs Last Year ──────────────────────────────
+    qa = (sales.groupby(["Year","Quarter"])["Net Sales"].sum().reset_index()
+          .assign(Label=lambda d: d["Year"].astype(str) + " Q" + d["Quarter"].astype(str))
+          .sort_values(["Year","Quarter"]))
 
-    ma_ch = (sales_ch.groupby(["Year","Month","Store Channel"])["Net Sales"].sum()
-             .reset_index()
-             .assign(Date=lambda d: pd.to_datetime(d[["Year","Month"]].assign(day=1)))
-             .sort_values("Date"))
-
-    ma = (ma_ch.groupby("Date")["Net Sales"].sum().reset_index())
-
-    mb = (budget.groupby(["Year","Month"])["Budget Sales"].sum().reset_index()
-          .assign(Date=lambda d: pd.to_datetime(d[["Year","Month"]].assign(day=1))))
+    qb = (budget.groupby(["Year","Quarter"])["Budget Sales"].sum().reset_index()
+          .assign(Label=lambda d: d["Year"].astype(str) + " Q" + d["Quarter"].astype(str)))
 
     ly_yrs = [y-1 for y in sel_years]
-    max_actual_date = ma["Date"].max()  # last month with real data
-    ml = (sales_raw[sales_raw["Year"].isin(ly_yrs) &
+    max_actual_qtr = qa[["Year","Quarter"]].iloc[-1]  # last quarter with real data
+    ql = (sales_raw[sales_raw["Year"].isin(ly_yrs) &
                     sales_raw["Store ID"].isin(valid_stores) &
                     sales_raw["Product ID"].isin(valid_prods)]
-          .groupby(["Year","Month"])["Net Sales"].sum().reset_index()
-          .assign(Date=lambda d: pd.to_datetime(d[["Year","Month"]].assign(day=1))
-                                 + pd.DateOffset(years=1)))
-    ml = ml[ml["Date"] <= max_actual_date]  # clip to actual data range
+          .groupby(["Year","Quarter"])["Net Sales"].sum().reset_index())
+    # Shift LY quarter labels +1 year so they align on the same x-axis
+    ql["Year"] = ql["Year"] + 1
+    # Clip to not exceed last actual quarter
+    ql = ql[(ql["Year"] < max_actual_qtr["Year"]) |
+            ((ql["Year"] == max_actual_qtr["Year"]) & (ql["Quarter"] <= max_actual_qtr["Quarter"]))]
+    ql = ql.assign(Label=lambda d: d["Year"].astype(str) + " Q" + d["Quarter"].astype(str))
 
-    # Outlier detection on total monthly net sales
-    if len(ma) >= 4:
-        q1, q3 = ma["Net Sales"].quantile([0.25, 0.75])
-        iqr = q3 - q1
-        _outliers = ma[(ma["Net Sales"] < q1 - 1.5*iqr) | (ma["Net Sales"] > q3 + 1.5*iqr)]
-    else:
-        _outliers = pd.DataFrame()
-
-    channels      = sorted(ma_ch["Store Channel"].dropna().unique())
-    ch_colors     = {"Full Price": C["blue"], "Outlet": C["teal"]}
-    ch_color_list = [ch_colors.get(c, C["purple"]) for c in channels]
+    q_merged = qa.merge(qb[["Label","Budget Sales"]], on="Label", how="left") \
+                 .merge(ql[["Label","Net Sales"]].rename(columns={"Net Sales":"LY Sales"}), on="Label", how="left")
 
     fig = go.Figure()
-    for ch, col in zip(channels, ch_color_list):
-        ch_data = ma_ch[ma_ch["Store Channel"] == ch]
-        fig.add_trace(go.Bar(
-            x=ch_data["Date"], y=ch_data["Net Sales"],
-            name=ch, marker_color=col, opacity=.85,
-        ))
-    fig.add_trace(go.Scatter(
-        x=mb["Date"], y=mb["Budget Sales"],
-        name="Budget", line=dict(color=C["amber"], width=2, dash="dash"),
+    fig.add_trace(go.Bar(
+        x=q_merged["Label"], y=q_merged["Net Sales"],
+        name="Revenue", marker_color=C["blue"], opacity=.85,
     ))
-    if not ml.empty:
-        fig.add_trace(go.Scatter(
-            x=ml["Date"], y=ml["Net Sales"],
-            name="Prior Year", line=dict(color=C["grey"], width=1.5, dash="dot"),
-        ))
-    if not _outliers.empty:
-        fig.add_trace(go.Scatter(
-            x=_outliers["Date"], y=_outliers["Net Sales"],
-            mode="markers+text", name="⚠ Outlier",
-            marker=dict(color=C["red"], size=12, symbol="circle-open", line=dict(width=2)),
-            text=_outliers["Net Sales"].apply(fmt), textposition="top center",
-        ))
+    fig.add_trace(go.Scatter(
+        x=q_merged["Label"], y=q_merged["Budget Sales"],
+        name="Target", line=dict(color=C["amber"], width=2, dash="dash"),
+        mode="lines+markers", marker=dict(size=6),
+    ))
+    fig.add_trace(go.Scatter(
+        x=q_merged["Label"], y=q_merged["LY Sales"],
+        name="Last Year", line=dict(color=C["grey"], width=2, dash="dot"),
+        mode="lines+markers", marker=dict(size=6),
+    ))
     fig.update_layout(
-        title="Monthly Net Revenue by Store Channel · vs Budget vs Prior Year  (⚠ = outlier ±1.5 IQR)",
-        height=340, barmode="stack",
+        title="Quarterly Net Revenue vs Target vs Last Year",
+        height=340,
         legend=dict(orientation="h", y=-0.22),
         xaxis=dict(showgrid=False),
         yaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
