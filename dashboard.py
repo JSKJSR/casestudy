@@ -1427,189 +1427,498 @@ elif page == "Store Network":
 elif page == "Insights & Actions":
 
     st.markdown('<p class="pg-title">Insights & Actions</p>', unsafe_allow_html=True)
-    st.markdown('<p class="pg-sub">Rule-based recommendations derived from live dashboard data · Updated on every filter change</p>',
+    st.markdown('<p class="pg-sub">Signal-driven recommendations from Sales Performance · Store Network · Product & Category · Updated on every filter change</p>',
                 unsafe_allow_html=True)
 
-    # ── Compute signals via standardised calc_kpis() ──────────────────────────
-    KI     = calc_kpis(sales, budget)
-    ly_i   = ly_net_sales()
-    vs_b   = KI["vs_bgt"]
-    vs_ly  = (KI["net_sales"] / ly_i - 1) * 100 if ly_i else 0
-    ret_rt = KI["return_rate"]
+    # ══════════════════════════════════════════════════════════════════
+    # SIGNAL COMPUTATIONS
+    # ══════════════════════════════════════════════════════════════════
+
+    KI       = calc_kpis(sales, budget)
+    ly_i     = ly_net_sales()
+    vs_b     = KI["vs_bgt"]
+    vs_ly    = (KI["net_sales"] / ly_i - 1) * 100 if ly_i else 0
+    ret_rt   = KI["return_rate"]
     avg_disc = sales[sales["Order Type"]=="Sales"]["Discount"].mean() * 100
+    gm_pct   = KI["gross_profit"] / KI["net_sales"] * 100 if KI["net_sales"] else 0
 
-    # Store-level
+    # ── Sales: quarterly YoY ──────────────────────────────────────────
+    qtr_rev = (sales[sales["Order Type"]=="Sales"]
+               .groupby(["Year","Quarter"])["Net Sales"].sum().reset_index())
+    if len(sel_years) >= 2:
+        cur_yr_s  = max(sel_years)
+        prev_yr_s = cur_yr_s - 1
+        qcy = qtr_rev[qtr_rev["Year"]==cur_yr_s].rename(columns={"Net Sales":"cur"})
+        qpy = qtr_rev[qtr_rev["Year"]==prev_yr_s].rename(columns={"Net Sales":"prev"})
+        qyoy = qcy.merge(qpy, on="Quarter", how="inner")
+        qyoy["yoy%"] = (qyoy["cur"] / qyoy["prev"] - 1) * 100
+        best_qtr  = qyoy.loc[qyoy["yoy%"].idxmax()] if not qyoy.empty else None
+        worst_qtr = qyoy.loc[qyoy["yoy%"].idxmin()] if not qyoy.empty else None
+        declining_qtrs = qyoy[qyoy["yoy%"] < -5]
+    else:
+        best_qtr = worst_qtr = None
+        declining_qtrs = pd.DataFrame()
+
+    # ── Sales: channel mix ────────────────────────────────────────────
+    ch_rev = (sales[sales["Order Type"]=="Sales"]
+              .merge(store_raw[["Store ID","Store Channel"]], on="Store ID", how="left")
+              .groupby("Store Channel")["Net Sales"].sum())
+    total_ch = ch_rev.sum()
+    outlet_share = ch_rev.get("Outlet", 0) / total_ch * 100 if total_ch else 0
+
+    # ── Sales: country mix ────────────────────────────────────────────
+    cty_rev = (sales[sales["Order Type"]=="Sales"]
+               .merge(store_raw[["Store ID","Store Country"]], on="Store ID", how="left")
+               .groupby("Store Country")["Net Sales"].sum().sort_values(ascending=False))
+    top_country    = cty_rev.index[0] if not cty_rev.empty else "N/A"
+    top_country_sh = cty_rev.iloc[0] / cty_rev.sum() * 100 if not cty_rev.empty else 0
+
+    # ── Sales: monthly vs target trend ───────────────────────────────
+    mo_rev = (sales[sales["Order Type"]=="Sales"]
+              .groupby(["Year","Month"])["Net Sales"].sum().reset_index())
+    mo_bgt = budget.groupby(["Year","Month"])["Budget Sales"].sum().reset_index()
+    mo_var = mo_rev.merge(mo_bgt, on=["Year","Month"], how="inner")
+    mo_var["var%"] = (mo_var["Net Sales"] / mo_var["Budget Sales"] - 1) * 100
+    miss_months = mo_var[mo_var["var%"] < -10]
+
+    # ── Store signals ─────────────────────────────────────────────────
     bgt_s  = budget.groupby("Store ID")["Budget Sales"].sum().reset_index()
-    st_agg = (sales.groupby("Store ID")
-              .agg(Revenue=("Net Sales","sum"), Cost=("Net Cost","sum"),
-                   Qty=("Net Qty","sum"), Txn=("Order ID","nunique"))
-              .reset_index()
-              .merge(store_raw[["Store ID","Store Name","Store Country",
-                                "Store Channel","Store Status"]], on="Store ID", how="left")
-              .merge(bgt_s, on="Store ID", how="left"))
-    st_agg["vs_bgt"]  = (st_agg["Revenue"] / st_agg["Budget Sales"] - 1) * 100
-    # Gross Profit = Net Sales − Net COGS; GM% = Gross Profit / Net Sales
-    st_agg["GM%"]     = (st_agg["Revenue"] - st_agg["Cost"]) / st_agg["Revenue"] * 100
+    ly_s   = (sales_raw[sales_raw["Year"].isin([y-1 for y in sel_years]) & (sales_raw["Order Type"]=="Sales")]
+              .groupby("Store ID")["Net Sales"].sum().reset_index()
+              .rename(columns={"Net Sales":"LY_Rev"}))
+    sqm_map = store_raw[["Store ID","Store Name","Store Country","Store Channel",
+                          "Store Status","Area Manager","Store Size (SQM)"]].copy()
 
-    below_bgt = st_agg[st_agg["vs_bgt"] < -10].sort_values("vs_bgt")
-    above_bgt = st_agg[st_agg["vs_bgt"] > 15].sort_values("vs_bgt", ascending=False)
-    low_gm    = st_agg[st_agg["GM%"] < 30].sort_values("GM%")
+    st_agg = (sales[sales["Order Type"]=="Sales"]
+              .groupby("Store ID")
+              .agg(Revenue=("Net Sales","sum"), Cost=("Net Cost","sum"),
+                   Orders=("Order ID","nunique"), Qty=("Net Qty","sum"))
+              .reset_index()
+              .merge(sqm_map, on="Store ID", how="left")
+              .merge(bgt_s,   on="Store ID", how="left")
+              .merge(ly_s,    on="Store ID", how="left"))
+    st_agg["vs_bgt%"] = (st_agg["Revenue"] / st_agg["Budget Sales"] - 1) * 100
+    st_agg["vs_ly%"]  = (st_agg["Revenue"] / st_agg["LY_Rev"]        - 1) * 100
+    st_agg["GM%"]     = (st_agg["Revenue"] - st_agg["Cost"]) / st_agg["Revenue"] * 100
+    st_agg["SQM_Rev"] = st_agg["Revenue"] / st_agg["Store Size (SQM)"].replace(0, pd.NA)
+    st_agg["AOV"]     = st_agg["Revenue"] / st_agg["Orders"].replace(0, pd.NA)
+
+    open_stores   = st_agg[st_agg["Store Status"]=="Open"]
+    below_bgt     = open_stores[open_stores["vs_bgt%"] < -10].sort_values("vs_bgt%")
+    above_bgt     = open_stores[open_stores["vs_bgt%"] > 15].sort_values("vs_bgt%", ascending=False)
+    below_ly      = open_stores[open_stores["vs_ly%"] < -5].sort_values("vs_ly%")
+    low_gm        = open_stores[open_stores["GM%"] < 30].sort_values("GM%")
+    low_sqm       = open_stores.dropna(subset=["SQM_Rev"]).nsmallest(3, "SQM_Rev")
+
+    # Area manager accountability
+    am_perf = (open_stores.groupby("Area Manager")
+               .agg(Revenue=("Revenue","sum"), Budget=("Budget Sales","sum"))
+               .assign(**{"vs_bgt%": lambda d: (d["Revenue"]/d["Budget"]-1)*100})
+               .sort_values("vs_bgt%"))
+    am_miss = am_perf[am_perf["vs_bgt%"] < -10]
+
+    # ── Product signals ───────────────────────────────────────────────
+    ps = sales.merge(product_raw[["Product ID","Product Name","Category","Brand",
+                                   "Price Tier"]], on="Product ID", how="left")
 
     # Category YoY
-    ps = sales.merge(product_raw, on="Product ID", how="left")
-    cat_yr = (sales_raw.merge(product_raw[["Product ID","Category"]], on="Product ID", how="left")
+    cat_yr = (sales_raw[sales_raw["Order Type"]=="Sales"]
+              .merge(product_raw[["Product ID","Category"]], on="Product ID", how="left")
               .groupby(["Category","Year"])["Net Sales"].sum().reset_index())
-    if len(sel_years) >= 1:
-        cur_yr  = max(sel_years)
-        prev_yr = cur_yr - 1
+    if len(sel_years) >= 2:
+        cur_yr   = max(sel_years)
+        prev_yr  = cur_yr - 1
         cat_cur  = cat_yr[cat_yr["Year"]==cur_yr].rename(columns={"Net Sales":"cur"})
         cat_prev = cat_yr[cat_yr["Year"]==prev_yr].rename(columns={"Net Sales":"prev"})
         cat_yoy  = cat_cur.merge(cat_prev, on="Category", how="outer").fillna(0)
         cat_yoy["yoy%"] = (cat_yoy["cur"] / cat_yoy["prev"] - 1) * 100
         cat_decline = cat_yoy[(cat_yoy["yoy%"] < -5) & (cat_yoy["prev"] > 0)].sort_values("yoy%")
+        cat_growth  = cat_yoy[(cat_yoy["yoy%"] > 10) & (cat_yoy["prev"] > 0)].sort_values("yoy%", ascending=False)
     else:
         cat_decline = pd.DataFrame()
+        cat_growth  = pd.DataFrame()
 
-    # Monthly outliers
-    ma_i = (sales.groupby(["Year","Month"])["Net Sales"].sum().reset_index()
+    # SKU-level GM
+    sku_agg = (ps.groupby(["Product ID","Product Name","Category","Brand"])
+               .agg(Revenue=("Net Sales","sum"), Cost=("Net Cost","sum"),
+                    Qty=("Net Qty","sum"), RetQty=("Return Qty","sum"))
+               .reset_index())
+    sku_agg["GM%"]      = (sku_agg["Revenue"] - sku_agg["Cost"]) / sku_agg["Revenue"].replace(0, pd.NA) * 100
+    sku_agg["Ret%"]     = sku_agg["RetQty"] / (sku_agg["Qty"] + sku_agg["RetQty"]).replace(0, pd.NA) * 100
+    neg_gm_prods        = sku_agg[sku_agg["GM%"] < 0].sort_values("GM%")
+    top10_rev           = sku_agg.nlargest(10, "Revenue")
+    top10_avg_gm        = top10_rev["GM%"].mean()
+    slow_movers         = sku_agg[sku_agg["Revenue"] > 0].nsmallest(10, "Revenue")
+    slow_avg_gm         = slow_movers["GM%"].mean()
+    high_ret_skus       = sku_agg[sku_agg["Ret%"] > 15].sort_values("Ret%", ascending=False)
+
+    # Category return rates
+    cat_ret = (ps.groupby("Category")
+               .agg(RetQty=("Return Qty","sum"), SalesQty=("Net Qty","sum"))
+               .assign(**{"Ret%": lambda d: d["RetQty"] / (d["SalesQty"]+d["RetQty"]).replace(0,pd.NA)*100})
+               .sort_values("Ret%", ascending=False))
+    high_ret_cats = cat_ret[cat_ret["Ret%"] > 12]
+
+    # Concentration: top brand revenue share
+    brand_rev  = ps[ps["Order Type"]=="Sales"].groupby("Brand")["Net Sales"].sum().sort_values(ascending=False)
+    top3_share = brand_rev.head(3).sum() / brand_rev.sum() * 100 if brand_rev.sum() else 0
+
+    # Monthly revenue outliers
+    ma_i = (sales[sales["Order Type"]=="Sales"]
+            .groupby(["Year","Month"])["Net Sales"].sum().reset_index()
             .assign(Date=lambda d: pd.to_datetime(d[["Year","Month"]].assign(day=1)))
             .sort_values("Date"))
     if len(ma_i) >= 4:
-        q1i, q3i = ma_i["Net Sales"].quantile([0.25, 0.75])
-        iqri = q3i - q1i
-        outliers_i = ma_i[(ma_i["Net Sales"] < q1i - 1.5*iqri) | (ma_i["Net Sales"] > q3i + 1.5*iqri)]
+        q1i, q3i   = ma_i["Net Sales"].quantile([0.25, 0.75])
+        iqri        = q3i - q1i
+        outliers_i  = ma_i[(ma_i["Net Sales"] < q1i - 1.5*iqri) | (ma_i["Net Sales"] > q3i + 1.5*iqri)]
     else:
         outliers_i = pd.DataFrame()
 
-    def card(color, icon, title, body):
-        border = {"🔴":"#D13438","🟡":"#FF8C00","🟢":"#107C10"}.get(icon, "#0078D4")
+    # ══════════════════════════════════════════════════════════════════
+    # CARD HELPER
+    # ══════════════════════════════════════════════════════════════════
+    def card(icon, title, body, owner=None):
+        border = {"🔴":"#D13438","🟡":"#FF8C00","🟢":"#107C10","🔵":"#0078D4"}.get(icon, "#0078D4")
+        owner_html = (f'<span style="float:right;background:{border};color:#fff;'
+                      f'font-size:10px;padding:2px 8px;border-radius:10px;">{owner}</span>'
+                      if owner else "")
         st.markdown(f"""
 <div style="background:#FFFFFF;border-left:4px solid {border};border-radius:6px;
             padding:14px 18px;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,.07);">
-  <div style="font-size:13px;font-weight:700;color:#252423;">{icon} {title}</div>
-  <div style="font-size:12px;color:#605E5C;margin-top:4px;line-height:1.6;">{body}</div>
+  <div style="font-size:13px;font-weight:700;color:#252423;">{owner_html}{icon} {title}</div>
+  <div style="font-size:12px;color:#605E5C;margin-top:6px;line-height:1.7;">{body}</div>
 </div>""", unsafe_allow_html=True)
 
-    # ── Section: Revenue vs Target ─────────────────────────────────────────────
-    st.markdown('<p class="sec-lbl">Revenue vs Target</p>', unsafe_allow_html=True)
+    # ══════════════════════════════════════════════════════════════════
+    # SECTION 1 — SALES PERFORMANCE
+    # ══════════════════════════════════════════════════════════════════
+    st.markdown('<p class="sec-lbl">📈 Sales Performance</p>', unsafe_allow_html=True)
 
-    if vs_b < -10:
-        card("🔴","🔴","Revenue Critically Below Budget",
-             f"Net revenue is <b>{fmt(vs_b,'%')}</b> vs budget ({fmt(KI['net_sales'])} vs {fmt(KI['budget'])}). "
-             f"Immediate review of pricing, campaign spend, and channel mix required.")
-    elif vs_b < 0:
-        card("🟡","🟡","Revenue Below Budget — Monitor Closely",
-             f"Net revenue is <b>{fmt(vs_b,'%')}</b> vs budget. "
-             f"Review underperforming stores and activate promotional levers.")
-    else:
-        card("🟢","🟢","Revenue On or Ahead of Budget",
-             f"Net revenue is <b>{fmt(vs_b,'%')}</b> vs budget. "
-             f"Sustain momentum; consider raising Q4 budget targets.")
-
+    # Growth signal
     if vs_ly < -5:
-        card("🔴","🔴","Year-on-Year Revenue Declining",
-             f"Revenue is <b>{fmt(vs_ly,'%')}</b> vs prior year. "
-             f"Investigate whether this is market-driven, assortment-related, or store-specific.")
-    elif vs_ly >= 5:
-        card("🟢","🟢","Strong Year-on-Year Growth",
-             f"Revenue grew <b>{fmt(vs_ly,'%')}</b> vs prior year ({fmt(ly_i)} → {fmt(KI['net_sales'])}). "
-             f"Identify best-practice stores and scale their playbook.")
+        card("🔴", "Revenue Declining Year-on-Year",
+             f"Net revenue is <b>{vs_ly:+.1f}%</b> vs prior year ({fmt(ly_i)} → {fmt(KI['net_sales'])}). "
+             f"Identify whether the decline is broad-based or concentrated in specific quarters/countries. "
+             f"{'Worst quarter: ' + worst_qtr['Quarter'] + ' (' + f'{worst_qtr[chr(121)+chr(111)+chr(121)+chr(37)]:+.1f}%' + ').' if worst_qtr is not None else ''}",
+             owner="CEO / Strategy")
+    elif vs_ly >= 10:
+        card("🟢", f"Strong YoY Growth: {vs_ly:+.1f}%",
+             f"Revenue grew from {fmt(ly_i)} to {fmt(KI['net_sales'])}. "
+             f"{'Best performing quarter: ' + best_qtr['Quarter'] + ' (' + f'{best_qtr[chr(121)+chr(111)+chr(121)+chr(37)]:+.1f}%' + ').' if best_qtr is not None else ''} "
+             f"Scale best-practice playbook across all markets.",
+             owner="Commercial Director")
+    elif vs_ly >= 0:
+        card("🟡", f"Modest YoY Growth: {vs_ly:+.1f}%",
+             f"Revenue is up {vs_ly:+.1f}% vs prior year but below double-digit growth expectations. "
+             f"Review channel and country mix to find acceleration opportunities.",
+             owner="Commercial Director")
 
-    # ── Section: Store Actions ─────────────────────────────────────────────────
-    st.markdown('<p class="sec-lbl">Store Actions</p>', unsafe_allow_html=True)
-
-    if not below_bgt.empty:
-        names = ", ".join(below_bgt["Store Name"].head(3).tolist())
-        card("🔴","🔴",f"{len(below_bgt)} Store(s) >10% Below Budget",
-             f"<b>{names}</b> and {max(0,len(below_bgt)-3)} others are materially missing budget. "
-             f"Assign area manager reviews, check local trading conditions and competitor activity.")
-    if not above_bgt.empty:
-        names2 = ", ".join(above_bgt["Store Name"].head(3).tolist())
-        card("🟢","🟢",f"{len(above_bgt)} Store(s) >15% Above Budget",
-             f"<b>{names2}</b> are significantly outperforming. "
-             f"Share best practices, consider budget uplift, and explore local replication.")
-    if not low_gm.empty:
-        names3 = ", ".join(low_gm["Store Name"].head(3).tolist())
-        card("🟡","🟡",f"{len(low_gm)} Store(s) with Gross Margin < 30%",
-             f"<b>{names3}</b> have margin pressure. Review discount authorisation levels "
-             f"and cost allocations.")
-
-    # ── Section: Product & Category ────────────────────────────────────────────
-    st.markdown('<p class="sec-lbl">Product & Category</p>', unsafe_allow_html=True)
-
-    if not cat_decline.empty:
-        dec_list = ", ".join(
-            f"{r['Category']} ({r['yoy%']:+.0f}%)"
-            for _, r in cat_decline.head(3).iterrows()
-        )
-        card("🟡","🟡","Declining Categories — Action Needed",
-             f"YoY decline in: <b>{dec_list}</b>. "
-             f"Review assortment relevance, pricing vs competitors, and in-store presentation.")
-
-    slow_gm = ps.groupby("Product ID").agg(
-        Revenue=("Net Sales","sum"), Cost=("Net Cost","sum"),
-        Name=("Product Name","first")
-    ).reset_index()
-    slow_gm["GM%"] = (slow_gm["Revenue"] - slow_gm["Cost"]) / slow_gm["Revenue"] * 100
-    neg_gm_prods = slow_gm[slow_gm["GM%"] < 0]
-    if not neg_gm_prods.empty:
-        card("🔴","🔴",f"{len(neg_gm_prods)} SKU(s) with Negative Gross Margin",
-             f"These products are selling below cost. Review pricing, clearance strategy, "
-             f"or discontinue if lifecycle is End-of-Life.")
-
-    if avg_disc > 15:
-        card("🟡","🟡",f"Average Discount at {avg_disc:.1f}% — Review Promotional Strategy",
-             f"High blanket discounting erodes margin. Shift to targeted, customer-segment "
-             f"promotions and enforce discount approval thresholds.")
+    # Target signal
+    if vs_b < -10:
+        miss_count = len(miss_months)
+        card("🔴", f"Revenue {vs_b:+.1f}% vs Target — Recovery Plan Required",
+             f"Actual: {fmt(KI['net_sales'])} vs Budget: {fmt(KI['budget'])}. "
+             f"{miss_count} month(s) missed target by >10%. "
+             f"Activate pricing, promotion, and store-level recovery levers immediately.",
+             owner="CFO / Commercial Director")
+    elif vs_b < 0:
+        card("🟡", f"Revenue {vs_b:+.1f}% vs Target — Monitor Weekly",
+             f"Actual: {fmt(KI['net_sales'])} vs Budget: {fmt(KI['budget'])}. "
+             f"Escalate to weekly variance reviews with area managers.",
+             owner="Commercial Director")
     else:
-        card("🟢","🟢",f"Discount Level Controlled at {avg_disc:.1f}%",
-             f"Promotional discipline is sound. Maintain guardrails and reward high-margin sales.")
+        card("🟢", f"Revenue {vs_b:+.1f}% vs Target — On Track",
+             f"Actual {fmt(KI['net_sales'])} is ahead of budget {fmt(KI['budget'])}. "
+             f"Consider raising forward targets to maintain stretch goals.",
+             owner="CFO")
 
-    # ── Section: Returns ───────────────────────────────────────────────────────
-    st.markdown('<p class="sec-lbl">Returns</p>', unsafe_allow_html=True)
+    # Country concentration
+    if top_country_sh > 50:
+        card("🟡", f"Revenue Concentrated in {top_country} ({top_country_sh:.0f}% of Total)",
+             f"Over half of revenue depends on one market. Diversification risk if that market softens. "
+             f"Accelerate growth plans in secondary markets.",
+             owner="CEO / Strategy")
+
+    # Outlet channel share
+    if outlet_share > 35:
+        card("🟡", f"Outlet Channel at {outlet_share:.0f}% of Revenue",
+             f"High outlet mix can indicate excess inventory and erodes brand perception. "
+             f"Review full-price sell-through rates and buying accuracy.",
+             owner="Buying / Commercial Director")
+
+    # Margin trend
+    if gm_pct < 40:
+        card("🔴", f"Gross Margin at {gm_pct:.1f}% — Below 40% Threshold",
+             f"Gross profit: {fmt(KI['gross_profit'])}. Pressure likely from high discounts, "
+             f"elevated returns, or unfavourable category mix. Immediate margin defence plan needed.",
+             owner="CFO / Finance")
+    elif gm_pct < 45:
+        card("🟡", f"Gross Margin at {gm_pct:.1f}% — Watch Closely",
+             f"Margin is acceptable but narrowing. Monitor discount levels, return costs, "
+             f"and category mix quarterly.",
+             owner="Finance")
+    else:
+        card("🟢", f"Gross Margin Healthy at {gm_pct:.1f}%",
+             f"Strong margin performance ({fmt(KI['gross_profit'])} gross profit). "
+             f"Protect by maintaining discount discipline and premium category mix.",
+             owner="Finance")
+
+    # Discount discipline
+    if avg_disc > 15:
+        card("🟡", f"Average Discount {avg_disc:.1f}% — Approval Controls Needed",
+             f"Blanket discounting at this level erodes margin by an estimated "
+             f"{fmt(KI['net_sales'] * (avg_disc - 10) / 100)} vs a 10% baseline. "
+             f"Implement tiered discount approval thresholds by channel.",
+             owner="Commercial Director")
+    else:
+        card("🟢", f"Discount Discipline Healthy at {avg_disc:.1f}%",
+             f"Promotional spend is controlled. Maintain guardrails and reward high-margin execution.",
+             owner="Commercial Director")
+
+    # ══════════════════════════════════════════════════════════════════
+    # SECTION 2 — STORE NETWORK
+    # ══════════════════════════════════════════════════════════════════
+    st.markdown('<p class="sec-lbl">🏪 Store Network</p>', unsafe_allow_html=True)
+
+    # Underperformers vs target
+    if not below_bgt.empty:
+        names_b = ", ".join(below_bgt["Store Name"].head(3).tolist())
+        extra_b = f" + {len(below_bgt)-3} more" if len(below_bgt) > 3 else ""
+        card("🔴", f"{len(below_bgt)} Store(s) >10% Below Target",
+             f"<b>{names_b}{extra_b}</b> are materially missing budget. "
+             f"Assign area manager reviews within 2 weeks. Check local footfall, competitor activity, "
+             f"and whether these stores have the right product mix.",
+             owner="Area Managers")
+
+    # Outperformers vs target
+    if not above_bgt.empty:
+        names_a = ", ".join(above_bgt["Store Name"].head(3).tolist())
+        extra_a = f" + {len(above_bgt)-3} more" if len(above_bgt) > 3 else ""
+        card("🟢", f"{len(above_bgt)} Store(s) >15% Above Target",
+             f"<b>{names_a}{extra_a}</b> are outperforming significantly. "
+             f"Document their practices (merchandising, staffing, local marketing) and replicate across network.",
+             owner="Commercial Director")
+
+    # YoY decline stores
+    if not below_ly.empty:
+        names_ly = ", ".join(below_ly["Store Name"].head(3).tolist())
+        extra_ly = f" + {len(below_ly)-3} more" if len(below_ly) > 3 else ""
+        card("🟡", f"{len(below_ly)} Store(s) Declining vs Last Year",
+             f"<b>{names_ly}{extra_ly}</b> are trailing prior year by >5%. "
+             f"Investigate if this is structural (location, store age) or operational (staff, assortment).",
+             owner="Area Managers")
+
+    # Low GM stores
+    if not low_gm.empty:
+        names_gm = ", ".join(low_gm["Store Name"].head(3).tolist())
+        extra_gm = f" + {len(low_gm)-3} more" if len(low_gm) > 3 else ""
+        card("🟡", f"{len(low_gm)} Store(s) with Gross Margin < 30%",
+             f"<b>{names_gm}{extra_gm}</b> have margin pressure. "
+             f"Review local discount authorisation levels, shrinkage, and COGS allocation.",
+             owner="Finance / Ops")
+
+    # Low $/SQM efficiency
+    if not low_sqm.empty:
+        sqm_names = ", ".join(low_sqm["Store Name"].tolist())
+        card("🟡", "Lowest Revenue per SQM — Space Productivity Review",
+             f"<b>{sqm_names}</b> are the least productive on $/SQM basis. "
+             f"Evaluate whether floor space is optimally zoned and whether assortment reflects "
+             f"local customer demand.",
+             owner="Ops / Real Estate")
+
+    # Area manager accountability
+    if not am_miss.empty:
+        am_names = ", ".join(am_miss.index.tolist())
+        card("🔴", f"Area Manager(s) Below Target: {am_names}",
+             f"{len(am_miss)} area manager portfolio(s) are >10% below target. "
+             f"Escalate to monthly performance review with structured improvement plan.",
+             owner="CEO / COO")
+
+    # ══════════════════════════════════════════════════════════════════
+    # SECTION 3 — PRODUCT & CATEGORY
+    # ══════════════════════════════════════════════════════════════════
+    st.markdown('<p class="sec-lbl">🏷️ Product & Category</p>', unsafe_allow_html=True)
+
+    # Bestseller margin quality
+    card("🔵", f"Top 10 Bestsellers: Avg GM% = {top10_avg_gm:.1f}%",
+         f"Revenue leaders are generating {'good' if top10_avg_gm >= 45 else 'moderate' if top10_avg_gm >= 35 else 'thin'} margins. "
+         f"{'Protect these lines — avoid deep discounting.' if top10_avg_gm >= 45 else 'Negotiate better cost prices or reduce promotional frequency on these SKUs.'}",
+         owner="Buying")
+
+    # Slow mover margin quality
+    if slow_avg_gm < 30:
+        card("🟡", f"Slow Movers Generating Only {slow_avg_gm:.1f}% GM — Clearance Review",
+             f"Bottom-10 revenue SKUs have below-average margins too. "
+             f"These are double-drag items (low volume + low margin). Prioritise for clearance or discontinuation.",
+             owner="Buying / Merchandising")
+
+    # Negative GM SKUs
+    if not neg_gm_prods.empty:
+        top_neg = ", ".join(neg_gm_prods["Product Name"].head(3).tolist())
+        card("🔴", f"{len(neg_gm_prods)} SKU(s) Selling Below Cost",
+             f"Products including <b>{top_neg}</b> have negative gross margin. "
+             f"Immediate action: raise price, activate clearance, or discontinue.",
+             owner="Buying")
+
+    # Declining categories
+    if not cat_decline.empty:
+        dec_list = ", ".join(f"{r['Category']} ({r['yoy%']:+.0f}%)" for _, r in cat_decline.head(3).iterrows())
+        card("🟡", "Declining Categories — Assortment Refresh Needed",
+             f"YoY decline in: <b>{dec_list}</b>. "
+             f"Review range relevance vs current trends, in-store zoning, and pricing vs competitors.",
+             owner="Buying / Merchandising")
+
+    # Growth categories — opportunity
+    if not cat_growth.empty:
+        grow_list = ", ".join(f"{r['Category']} ({r['yoy%']:+.0f}%)" for _, r in cat_growth.head(3).iterrows())
+        card("🟢", "Fast-Growing Categories — Investment Opportunity",
+             f"<b>{grow_list}</b> are growing strongly. "
+             f"Increase depth of range, secure exclusive lines, and prioritise floor space allocation.",
+             owner="Buying")
+
+    # Brand concentration
+    if top3_share > 60:
+        card("🟡", f"Top 3 Brands = {top3_share:.0f}% of Revenue — Portfolio Concentration Risk",
+             f"High brand dependency creates supply and negotiation risk. "
+             f"Build out secondary brand tier to reduce leverage concentration.",
+             owner="Buying / Commercial Director")
+
+    # ── Return Rate signals ───────────────────────────────────────────
+    st.markdown('<p class="sec-lbl">↩️ Returns</p>', unsafe_allow_html=True)
 
     if ret_rt > 12:
-        card("🔴","🔴",f"Return Rate {ret_rt:.1f}% — Requires Immediate Investigation",
-             f"Return rate above 12% threshold. Investigate product quality issues, "
-             f"sizing accuracy, misleading product descriptions, and channel-specific patterns.")
+        card("🔴", f"Overall Return Rate {ret_rt:.1f}% — Urgent Investigation Required",
+             f"Return rate exceeds 12% threshold. This is eroding net sales and increasing reverse logistics costs. "
+             f"Audit product descriptions, sizing accuracy, and quality by category immediately.",
+             owner="Quality / Ops")
     elif ret_rt > 8:
-        card("🟡","🟡",f"Return Rate {ret_rt:.1f}% — Elevated",
-             f"Monitor closely. Identify top-returning SKUs and channels. "
-             f"Ensure return data feeds back into buying decisions.")
+        card("🟡", f"Return Rate {ret_rt:.1f}% — Elevated",
+             f"Monitor by SKU and channel. Ensure return data feeds back into next buying cycle.",
+             owner="Buying")
     else:
-        card("🟢","🟢",f"Return Rate {ret_rt:.1f}% — Healthy",
-             f"Returns are within acceptable range. Continue monitoring for seasonal spikes.")
+        card("🟢", f"Return Rate {ret_rt:.1f}% — Within Healthy Range",
+             f"Returns are controlled. Continue monitoring for seasonal spikes (post-holiday, sale periods).",
+             owner="Buying")
 
-    # ── Section: Trend Anomalies ───────────────────────────────────────────────
-    st.markdown('<p class="sec-lbl">Trend Anomalies Detected</p>', unsafe_allow_html=True)
+    # High-return categories
+    if not high_ret_cats.empty:
+        hrc_list = ", ".join(f"{idx} ({row['Ret%']:.0f}%)" for idx, row in high_ret_cats.iterrows())
+        card("🟡", f"High Return Rate Categories: {hrc_list}",
+             f"These categories are driving disproportionate returns. "
+             f"Investigate fit, quality, or accuracy of product content (images, sizing guides).",
+             owner="Buying / Quality")
 
+    # High-return SKUs
+    if not high_ret_skus.empty:
+        hrs_list = ", ".join(high_ret_skus["Product Name"].head(3).tolist())
+        card("🟡", f"{len(high_ret_skus)} SKU(s) with Return Rate >15%",
+             f"Top offenders: <b>{hrs_list}</b>. "
+             f"Flag for product review; consider temporary suspension from active range.",
+             owner="Buying")
+
+    # ── Revenue Anomalies ─────────────────────────────────────────────
     if not outliers_i.empty:
+        st.markdown('<p class="sec-lbl">⚠️ Revenue Anomalies</p>', unsafe_allow_html=True)
         for _, row in outliers_i.iterrows():
-            direction = "spike" if row["Net Sales"] > ma_i["Net Sales"].median() else "dip"
-            month_lbl = row["Date"].strftime("%b %Y")
-            card("🟡","🟡",f"Statistical {direction.title()} in {month_lbl}",
-                 f"Revenue of <b>{fmt(row['Net Sales'])}</b> is an outlier (±1.5 IQR). "
-                 f"Investigate {'one-off promotional event or exceptional trading conditions' if direction=='spike' else 'supply disruption, store closure, or external shock'}.")
-    else:
-        card("🟢","🟢","No Statistical Outliers Detected",
-             "Monthly revenue is tracking within normal bounds for the selected period.")
+            direction  = "spike" if row["Net Sales"] > ma_i["Net Sales"].median() else "dip"
+            month_lbl  = row["Date"].strftime("%b %Y")
+            card("🟡", f"Statistical Revenue {direction.title()} — {month_lbl}",
+                 f"Revenue of <b>{fmt(row['Net Sales'])}</b> is a statistical outlier (±1.5 IQR). "
+                 f"Investigate: {'one-off promotional event or exceptional trading conditions' if direction=='spike' else 'supply disruption, planned store closure, or external market shock'}.",
+                 owner="Commercial Director")
 
-    # ── Section: Prioritised Action Table ─────────────────────────────────────
-    st.markdown('<p class="sec-lbl">Prioritised Action Summary</p>', unsafe_allow_html=True)
+    # ══════════════════════════════════════════════════════════════════
+    # PRIORITISED ACTION TABLE
+    # ══════════════════════════════════════════════════════════════════
+    st.markdown('<p class="sec-lbl">✅ Prioritised Action Summary</p>', unsafe_allow_html=True)
 
     actions = []
-    if vs_b < -10:          actions.append(("🔴 Critical","Revenue vs Target","Activate recovery plan: pricing, promotions, store reviews","CFO / Commercial Director"))
-    elif vs_b < 0:          actions.append(("🟡 Monitor","Revenue vs Target","Weekly target variance review with area managers","Commercial Director"))
-    if vs_ly < -5:          actions.append(("🔴 Critical","YoY Growth","Root-cause analysis of YoY decline by country and channel","CEO / Strategy"))
-    if not below_bgt.empty: actions.append(("🔴 Critical","Store Performance",f"Area manager reviews for {len(below_bgt)} underperforming stores","Area Managers"))
-    if not low_gm.empty:    actions.append(("🟡 Monitor","Store Margin",f"Margin improvement plans for {len(low_gm)} low-GM stores","Finance / Ops"))
-    if not cat_decline.empty: actions.append(("🟡 Monitor","Category Mix","Assortment refresh for declining categories","Buying / Merchandising"))
-    if not neg_gm_prods.empty: actions.append(("🔴 Critical","Negative GM SKUs",f"Clearance or discontinuation of {len(neg_gm_prods)} loss-making SKUs","Buying"))
-    if avg_disc > 15:       actions.append(("🟡 Monitor","Discounting","Implement discount approval guardrails","Commercial Director"))
-    if ret_rt > 12:         actions.append(("🔴 Critical","Return Rate","Launch quality/product accuracy investigation","Quality / Ops"))
-    elif ret_rt > 8:        actions.append(("🟡 Monitor","Return Rate","Monthly returns SKU analysis","Buying"))
-    if not outliers_i.empty: actions.append(("🟡 Monitor","Revenue Anomalies",f"Investigate {len(outliers_i)} outlier month(s)","Commercial Director"))
-    if not actions:         actions.append(("🟢 Good","All KPIs","Dashboard signals are healthy — continue monitoring","All"))
+    # Revenue vs Target
+    if vs_b < -10:
+        actions.append(("🔴 Critical","Revenue vs Target",
+                         f"Activate recovery plan: pricing, promotions, store reviews ({vs_b:+.1f}% vs budget)",
+                         "CFO / Commercial Director"))
+    elif vs_b < 0:
+        actions.append(("🟡 Monitor","Revenue vs Target",
+                         "Weekly target variance review with area managers",
+                         "Commercial Director"))
+    # YoY Growth
+    if vs_ly < -5:
+        actions.append(("🔴 Critical","YoY Growth",
+                         f"Root-cause analysis of {vs_ly:+.1f}% YoY decline by country and channel",
+                         "CEO / Strategy"))
+    # Gross Margin
+    if gm_pct < 40:
+        actions.append(("🔴 Critical","Gross Margin",
+                         f"GM at {gm_pct:.1f}% — launch margin defence: pricing, discount controls, mix shift",
+                         "CFO / Finance"))
+    elif gm_pct < 45:
+        actions.append(("🟡 Monitor","Gross Margin",
+                         f"GM at {gm_pct:.1f}% — quarterly margin review; protect via discount guardrails",
+                         "Finance"))
+    # Stores vs target
+    if not below_bgt.empty:
+        actions.append(("🔴 Critical","Store Performance",
+                         f"Area manager reviews for {len(below_bgt)} store(s) >10% below target",
+                         "Area Managers"))
+    # Stores vs LY
+    if not below_ly.empty:
+        actions.append(("🟡 Monitor","Store YoY",
+                         f"{len(below_ly)} store(s) declining vs last year — operational review",
+                         "Area Managers"))
+    # Low GM stores
+    if not low_gm.empty:
+        actions.append(("🟡 Monitor","Store Margin",
+                         f"Margin improvement plans for {len(low_gm)} store(s) with GM < 30%",
+                         "Finance / Ops"))
+    # Area managers
+    if not am_miss.empty:
+        actions.append(("🔴 Critical","Area Manager Accountability",
+                         f"{len(am_miss)} area manager(s) below target — structured performance plan",
+                         "CEO / COO"))
+    # Negative GM SKUs
+    if not neg_gm_prods.empty:
+        actions.append(("🔴 Critical","Negative GM SKUs",
+                         f"Clearance or discontinuation of {len(neg_gm_prods)} loss-making SKU(s)",
+                         "Buying"))
+    # Category decline
+    if not cat_decline.empty:
+        actions.append(("🟡 Monitor","Category Mix",
+                         f"Assortment refresh for {len(cat_decline)} declining category/ies",
+                         "Buying / Merchandising"))
+    # Discount
+    if avg_disc > 15:
+        actions.append(("🟡 Monitor","Discounting",
+                         f"Implement discount approval guardrails (current avg: {avg_disc:.1f}%)",
+                         "Commercial Director"))
+    # Returns
+    if ret_rt > 12:
+        actions.append(("🔴 Critical","Return Rate",
+                         f"Launch product quality & accuracy investigation (return rate: {ret_rt:.1f}%)",
+                         "Quality / Ops"))
+    elif ret_rt > 8:
+        actions.append(("🟡 Monitor","Return Rate",
+                         f"Monthly returns SKU analysis (return rate: {ret_rt:.1f}%)",
+                         "Buying"))
+    # High-return SKUs
+    if not high_ret_skus.empty:
+        actions.append(("🟡 Monitor","High-Return SKUs",
+                         f"Review {len(high_ret_skus)} SKU(s) with return rate >15%",
+                         "Buying"))
+    # Anomalies
+    if not outliers_i.empty:
+        actions.append(("🟡 Monitor","Revenue Anomalies",
+                         f"Investigate {len(outliers_i)} outlier month(s) in revenue trend",
+                         "Commercial Director"))
+    # Country concentration
+    if top_country_sh > 50:
+        actions.append(("🟡 Monitor","Market Concentration",
+                         f"{top_country} at {top_country_sh:.0f}% revenue share — diversification plan",
+                         "CEO / Strategy"))
+    # Default healthy state
+    if not actions:
+        actions.append(("🟢 Good","All Signals","Dashboard signals are healthy — continue monitoring","All"))
 
     action_df = pd.DataFrame(actions, columns=["Priority","Area","Recommended Action","Owner"])
     st.dataframe(
