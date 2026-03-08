@@ -381,62 +381,87 @@ if page == "Executive Summary":
     ly  = ly_net_sales()
     vs_ly = (K["net_sales"] / ly - 1) * 100 if ly else 0
 
-    # ── Row 1: Sales waterfall card + remaining KPIs ──────────────────────────
-    col_sales, col_rest = st.columns([2, 5])
+    # ── 4 grouped KPI cards (financial report layout) ─────────────────────────
+    vs_ly_color  = "#107C10" if vs_ly >= 0 else "#D13438"
+    vs_ly_arrow  = "▲" if vs_ly >= 0 else "▼"
+    vs_bgt_color = "#107C10" if K["vs_bgt"] >= 0 else "#D13438"
+    vs_bgt_arrow = "▲" if K["vs_bgt"] >= 0 else "▼"
 
-    with col_sales:
-        vs_ly_color = "#107C10" if vs_ly >= 0 else "#D13438"
-        vs_ly_arrow = "▲" if vs_ly >= 0 else "▼"
-        st.markdown(f"""
+    def kpi_card(title, accent, rows, footer=None):
+        """
+        rows = list of (label, value, is_highlight, value_color)
+        """
+        inner = ""
+        for i, (lbl, val, bold, col) in enumerate(rows):
+            border = "border-bottom:1px solid #F0F2F6;" if i < len(rows)-1 else ""
+            fs     = "18px" if bold else "14px"
+            fw     = "700"  if bold else "600"
+            inner += f"""
+  <div style="display:flex;justify-content:space-between;align-items:baseline;
+              padding:6px 0;{border}">
+    <span style="font-size:12px;color:#605E5C;">{lbl}</span>
+    <span style="font-size:{fs};font-weight:{fw};color:{col};">{val}</span>
+  </div>"""
+        foot = f'<div style="font-size:11px;color:#605E5C;margin-top:6px;">{footer}</div>' if footer else ""
+        return f"""
 <div style="background:#FFFFFF;border-radius:8px;padding:16px 20px;
-            box-shadow:0 1px 4px rgba(0,0,0,.08);border-top:3px solid #0078D4;height:100%;">
+            box-shadow:0 1px 4px rgba(0,0,0,.08);border-top:3px solid {accent};">
   <div style="font-size:10px;font-weight:700;text-transform:uppercase;
-              letter-spacing:.6px;color:#605E5C;margin-bottom:10px;">
-    Revenue Breakdown
-  </div>
+              letter-spacing:.6px;color:#A19F9D;margin-bottom:8px;">{title}</div>
+  {inner}
+  {foot}
+</div>"""
 
-  <div style="display:flex;justify-content:space-between;align-items:baseline;
-              padding:6px 0;border-bottom:1px solid #F0F2F6;">
-    <span style="font-size:12px;color:#605E5C;">Gross Sales</span>
-    <span style="font-size:16px;font-weight:700;color:#252423;">{fmt(K['gross_sales'])}</span>
-  </div>
+    g1, g2, g3, g4 = st.columns(4)
 
-  <div style="display:flex;justify-content:space-between;align-items:baseline;
-              padding:6px 0;border-bottom:1px solid #F0F2F6;">
-    <span style="font-size:12px;color:#D13438;">− Returns</span>
-    <span style="font-size:14px;font-weight:600;color:#D13438;">({fmt(K['return_sales'])})</span>
-  </div>
+    # ── Card 1: Revenue ────────────────────────────────────────────────────────
+    with g1:
+        st.markdown(kpi_card(
+            "Revenue", "#0078D4",
+            [
+                ("Gross Sales",   fmt(K["gross_sales"]),  False, "#252423"),
+                ("− Returns",    f"({fmt(K['return_sales'])})", False, "#D13438"),
+                ("Net Sales",     fmt(K["net_sales"]),    True,  "#0078D4"),
+            ],
+            footer=f"Return Rate: <b>{K['return_rate']:.1f}%</b>"
+        ), unsafe_allow_html=True)
 
-  <div style="display:flex;justify-content:space-between;align-items:baseline;
-              padding:8px 0 4px 0;">
-    <span style="font-size:13px;font-weight:700;color:#0078D4;">Net Sales</span>
-    <span style="font-size:20px;font-weight:700;color:#0078D4;">{fmt(K['net_sales'])}</span>
-  </div>
+    # ── Card 2: Profitability ──────────────────────────────────────────────────
+    with g2:
+        pm_color = "#107C10" if K["profit_margin"] >= 40 else "#FF8C00"
+        st.markdown(kpi_card(
+            "Profitability", "#107C10",
+            [
+                ("Net COGS",      fmt(K["net_cogs"]),           False, "#252423"),
+                ("Gross Profit",  fmt(K["gross_profit"]),       True,  "#107C10"),
+                ("Profit Margin", f"{K['profit_margin']:.1f}%", True,  pm_color),
+            ]
+        ), unsafe_allow_html=True)
 
-  <div style="font-size:11px;color:{vs_ly_color};margin-top:4px;">
-    {vs_ly_arrow} {fmt(vs_ly,'%')} vs Prior Year
-  </div>
-  <div style="font-size:11px;color:#605E5C;margin-top:2px;">
-    Return Rate: <b>{K['return_rate']:.1f}%</b>
-  </div>
-</div>""", unsafe_allow_html=True)
+    # ── Card 3: vs Target ─────────────────────────────────────────────────────
+    with g3:
+        st.markdown(kpi_card(
+            "vs Target", "#FF8C00",
+            [
+                ("Budget",       fmt(K["budget"]),          False, "#252423"),
+                ("vs Budget",    f"{vs_bgt_arrow} {fmt(K['vs_bgt'],'%')}", True, vs_bgt_color),
+                ("Variance $",   fmt(K["vs_bgt_abs"]),      False, vs_bgt_color),
+                ("LY Revenue",   fmt(ly),                   False, "#252423"),
+            ],
+            footer=f"vs Prior Year: <b style='color:{vs_ly_color}'>{vs_ly_arrow} {fmt(vs_ly,'%')}</b>"
+        ), unsafe_allow_html=True)
 
-    with col_rest:
-        c3,c4,c5,c6,c7,c8 = st.columns(6)
-        c3.metric("vs Budget",      fmt(K["vs_bgt"],"%"),
-                  delta=fmt(K["vs_bgt_abs"]),
-                  delta_color="normal" if K["vs_bgt"] >= 0 else "inverse")
-        c4.metric("Gross Profit",   fmt(K["gross_profit"]))
-        c5.metric("Profit Margin",  f"{K['profit_margin']:.1f}%")
-        c6.metric("Total Orders",   f"{K['total_orders']:,}")
-        c7.metric("AOV",            fmt(K["aov"]))
-        c8.metric("LY Revenue",     fmt(ly))
-
-    # ── 2nd KPI row ───────────────────────────────────────────────────────────
-    r1,r2,r3 = st.columns(3)
-    r1.metric("Net COGS",       fmt(K["net_cogs"]))
-    r2.metric("Units / Order",  f"{K['units_per_order']:.2f}")
-    r3.metric("Total Orders (Sales)", f"{K['total_orders']:,}")
+    # ── Card 4: Volume & Efficiency ───────────────────────────────────────────
+    with g4:
+        st.markdown(kpi_card(
+            "Volume & Efficiency", "#744DA9",
+            [
+                ("Total Orders",   f"{K['total_orders']:,}",        False, "#252423"),
+                ("AOV",            fmt(K["aov"]),                   True,  "#744DA9"),
+                ("Units / Order",  f"{K['units_per_order']:.2f}",   False, "#252423"),
+            ],
+            footer="Orders = sales transactions only (returns excluded)"
+        ), unsafe_allow_html=True)
 
     # ── YTD strip ─────────────────────────────────────────────────────────────
     max_month  = sales["Month"].max() if not sales.empty else 12
