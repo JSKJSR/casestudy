@@ -165,189 +165,36 @@ CHART = dict(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SYNTHETIC DATA GENERATION  (mirrors the real Intersport dataset structure)
+# REAL DATA LOADING  — from parquet files committed to the repo
 # ══════════════════════════════════════════════════════════════════════════════
-@st.cache_data(show_spinner="⏳ Building dataset…")
+@st.cache_data(show_spinner="⏳ Loading dataset…")
 def generate_data():
-    rng = np.random.default_rng(42)
+    import os
+    base = os.path.join(os.path.dirname(__file__), "data")
 
-    # ── Store master ──────────────────────────────────────────────────────────
-    store_info = [
-        ("LD-01","Store 1","Full Price","Flagship","UK","United Kingdom","London",820,"J. Brown","2018-05-01",1,"2019-05-01","Open"),
-        ("LD-02","Store 2","Full Price","Flagship","NL","The Netherlands","Amsterdam",640,"M. de Vries","2019-03-15",1,"2020-03-15","Open"),
-        ("LD-03","Store 3","Full Price","Concession","NL","The Netherlands","Rotterdam",580,"M. de Vries","2020-09-01",1,"2021-09-01","Open"),
-        ("LD-04","Store 4","Outlet","Concession","UK","United Kingdom","Manchester",420,"J. Brown","2017-11-01",1,"2018-11-01","Open"),
-        ("LD-05","Store 5","Full Price","Flagship","DE","Germany","Berlin",900,"T. Weber","2018-06-01",1,"2019-06-01","Open"),
-        ("LD-06","Store 6","Full Price","Concession","DE","Germany","Munich",520,"T. Weber","2019-08-01",1,"2020-08-01","Open"),
-        ("LD-07","Store 7","Outlet","Pop-Up","FR","France","Paris",350,"C. Dubois","2020-03-01",1,"2021-03-01","Open"),
-        ("LD-08","Store 8","Full Price","Flagship","UK","United Kingdom","London",780,"J. Brown","2017-04-01",1,"2018-04-01","Open"),
-        ("LD-09","Store 9","Full Price","Concession","NL","The Netherlands","Utrecht",460,"L. Bakker","2021-01-15",1,"2022-01-15","Open"),
-        ("LD-10","Store 10","Outlet","Pop-Up","DE","Germany","Hamburg",310,"K. Fischer","2021-06-01",0,"2023-06-01","Open"),
-        ("LD-11","Store 11","Full Price","Concession","FR","France","Lyon",490,"P. Laurent","2019-12-01",1,"2020-12-01","Open"),
-        ("LD-12","Store 12","Full Price","Flagship","UK","United Kingdom","Birmingham",720,"R. Smith","2018-09-01",1,"2019-09-01","Open"),
-        ("LD-13","Store 13","Outlet","Concession","DE","Germany","Cologne",380,"T. Weber","2020-04-01",0,"2022-04-01","Open"),
-        ("LD-14","Store 14","Full Price","Concession","FR","France","Marseille",430,"C. Dubois","2021-07-01",0,"2023-07-01","Open"),
-        ("LD-15","Store 15","Full Price","Flagship","NL","The Netherlands","Amsterdam",860,"M. de Vries","2016-10-01",1,"2017-10-01","Open"),
-        ("LD-16","Store 16","Outlet","Pop-Up","UK","United Kingdom","Leeds",290,"J. Brown","2022-02-01",0,"2024-02-01","Open"),
-        ("LD-17","Store 17","Full Price","Concession","DE","Germany","Frankfurt",540,"K. Fischer","2019-05-01",1,"2020-05-01","Open"),
-        ("LD-18","Store 18","Full Price","Flagship","FR","France","Paris",980,"P. Laurent","2017-03-01",1,"2018-03-01","Open"),
-        ("LD-19","Store 19","Outlet","Concession","UK","United Kingdom","Glasgow",360,"R. Smith","2020-11-01",0,"2022-11-01","Open"),
-        ("LD-20","Store 20","Full Price","Concession","NL","The Netherlands","Rotterdam",410,"L. Bakker","2021-09-01",0,"2023-09-01","Open"),
-        ("LD-21","Store 21","Full Price","Flagship","DE","Germany","Berlin",760,"T. Weber","2018-01-01",1,"2019-01-01","Open"),
-        ("LD-22","Store 22","Outlet","Pop-Up","FR","France","Nice",280,"C. Dubois","2022-05-01",0,"2024-05-01","Open"),
-        ("LD-23","Store 23","Full Price","Concession","UK","United Kingdom","Bristol",500,"J. Brown","2019-07-01",1,"2020-07-01","Open"),
-        ("LD-24","Store 24","Full Price","Flagship","NL","The Netherlands","The Hague",670,"M. de Vries","2018-08-01",1,"2019-08-01","Open"),
-        ("LD-25","Store 25","Full Price","Concession","DE","Germany","Stuttgart",445,"K. Fischer","2020-06-01",1,"2021-06-01","Open"),
-        ("LD-26","Store 26","Outlet","Concession","FR","France","Bordeaux",330,"P. Laurent","2021-04-01",0,"2023-04-01","Closed"),
-        ("LD-27","Store 27","Full Price","Pop-Up","UK","United Kingdom","Edinburgh",260,"R. Smith","2022-09-01",0,"2024-09-01","Open"),
-    ]
-    store_cols = ["Store ID","Store Name","Store Channel","Store Format",
-                  "Store Country Code","Store Country","Store City","Store SQM",
-                  "Store Area Manager","Store Opening Date","Store LFL Status",
-                  "Store LFL Date","Store Status"]
-    store = pd.DataFrame(store_info, columns=store_cols)
-    store["Store Opening Date"] = pd.to_datetime(store["Store Opening Date"])
-    store["Store LFL Date"]     = pd.to_datetime(store["Store LFL Date"])
+    sales    = pd.read_parquet(f"{base}/sales.parquet")
+    budget   = pd.read_parquet(f"{base}/budget.parquet")
+    store    = pd.read_parquet(f"{base}/store.parquet")
+    product  = pd.read_parquet(f"{base}/product.parquet")
+    customer = pd.read_parquet(f"{base}/customer.parquet")
 
-    # ── Product master ────────────────────────────────────────────────────────
-    categories = {
-        "Apparel":      (["Jackets","Tops","Bottoms","Footwear","Accessories"],        [85,45,60,120,35]),
-        "Equipment":    (["Rackets","Balls","Fitness","Outdoor","Bikes"],               [150,40,90,200,600]),
-        "Teamwear":     (["Jerseys","Shorts","Socks","Training Kits","Goalkeeper"],     [65,30,15,120,55]),
-    }
-    brands    = ["Nike","Adidas","Puma","Under Armour","Intersport","New Balance","Asics","Reebok"]
-    tiers     = ["Good","Better","Best"]
-    lifecycle = ["Running","Novelty","Bargain","Not assigned"]
-    colours   = ["Black","White","Blue","Red","Green","Grey","Navy","Yellow"]
-    materials = ["Polyester","Cotton","Leather","Rubber","Nylon","Mesh","Fleece"]
-
-    prod_rows = []
-    pid = 1
-    for cat, (subcats, base_prices) in categories.items():
-        for sub, bp in zip(subcats, base_prices):
-            n = rng.integers(180, 260)
-            for _ in range(n):
-                unit = round(bp * rng.uniform(0.6, 2.2), 2)
-                prod_rows.append({
-                    "Product ID":  f"P{pid:04d}",
-                    "Category":    cat,
-                    "Sub-Category":sub,
-                    "Product Name":f"Product {pid:04d}",
-                    "Brand":       rng.choice(brands),
-                    "Price Tier":  rng.choice(tiers, p=[0.45,0.35,0.20]),
-                    "Lifecycle":   rng.choice(lifecycle, p=[0.55,0.20,0.15,0.10]),
-                    "Unit Price":  unit,
-                    "Cost Price":  round(unit * rng.uniform(0.45, 0.65), 2),
-                    "Colour":      rng.choice(colours),
-                    "Material":    rng.choice(materials),
-                    "MOQ":         int(rng.integers(5, 200)),
-                    "Product Image URL": "https://via.placeholder.com/80x80?text=IMG",
-                })
-                pid += 1
-    product = pd.DataFrame(prod_rows)
-
-    # ── Customers ─────────────────────────────────────────────────────────────
-    segments = ["Consumer","Corporate","Home Office","Small Business"]
-    genders  = ["Male","Female"]
-    cities_by_country = {
-        "United Kingdom": ["London","Manchester","Birmingham","Leeds","Glasgow","Bristol","Edinburgh"],
-        "The Netherlands":["Amsterdam","Rotterdam","Utrecht","The Hague","Eindhoven"],
-        "Germany":        ["Berlin","Munich","Hamburg","Cologne","Frankfurt","Stuttgart"],
-        "France":         ["Paris","Lyon","Marseille","Nice","Bordeaux","Toulouse"],
-    }
-    cust_rows = []
-    for i in range(17_000):
-        country = rng.choice(list(cities_by_country))
-        city    = rng.choice(cities_by_country[country])
-        age     = int(rng.integers(18, 72))
-        lo, hi  = (age // 5) * 5, (age // 5) * 5 + 4
-        cust_rows.append({
-            "Customer ID":           f"C{i+1:06d}",
-            "Customer Name":         f"Customer {i+1}",
-            "Customer Segment":      rng.choice(segments, p=[0.50,0.25,0.15,0.10]),
-            "Customer Age":          age,
-            "Customer Age Bucket":   f"{lo}-{hi}",
-            "Customer Gender":       rng.choice(genders),
-            "Customer City":         city,
-            "Customer Country":      country,
-            "Loyalty Member":        rng.choice(["Yes","No"], p=[0.35,0.65]),
-        })
-    customer = pd.DataFrame(cust_rows)
-
-    # ── Sales Orders ──────────────────────────────────────────────────────────
-    store_ids   = store["Store ID"].tolist()
-    product_ids = product["Product ID"].tolist()
-    customer_ids= customer["Customer ID"].tolist()
-
-    dates = pd.date_range("2022-01-01", "2025-08-24", freq="D")
-    n_orders = 44_000
-    order_dates = rng.choice(dates, size=n_orders)
-
-    # seasonal weight: Q4 gets ~40% more volume
-    def seasonal_qty(month):
-        return rng.integers(1, 6) * (1.4 if month in [10,11,12] else 1)
-
-    sales_rows = []
-    for i in range(n_orders):
-        d        = pd.Timestamp(order_dates[i])
-        prod_row = product.iloc[rng.integers(len(product))]
-        qty      = max(1, int(seasonal_qty(d.month)))
-        discount = float(rng.choice([0,0,0,0.05,0.10,0.15,0.20,0.25,0.30],
-                                    p=[0.40,0.10,0.10,0.10,0.10,0.07,0.06,0.04,0.03]))
-        unit     = prod_row["Unit Price"]
-        sales_val= round(unit * qty * (1 - discount), 3)
-        cost_val = round(prod_row["Cost Price"] * qty, 3)
-        otype    = "Return" if rng.random() < 0.12 else "Sales"
-        ship_d   = d + pd.Timedelta(days=int(rng.integers(1, 6)))
-        inv_d    = d + pd.Timedelta(days=int(rng.integers(7, 15)))
-        sales_rows.append({
-            "Order Date":    d,
-            "Order ID":      f"ORD-{i+1:06d}",
-            "Customer ID":   customer_ids[rng.integers(len(customer_ids))],
-            "Store ID":      store_ids[rng.integers(len(store_ids))],
-            "Product ID":    prod_row["Product ID"],
-            "Order Type":    otype,
-            "Quantity":      qty,
-            "Cost":          cost_val,
-            "Discount":      discount,
-            "Sales":         sales_val,
-            "Shipping Date": ship_d,
-            "Invoice Date":  inv_d,
-        })
-    sales = pd.DataFrame(sales_rows)
-
-    # ── Budget  (monthly, per store, ~95% of rolling actual average) ──────────
-    bgt_rows = []
-    for sid in store_ids:
-        for yr in [2022, 2023, 2024, 2025]:
-            months = range(1, 9) if yr == 2025 else range(1, 13)
-            for mo in months:
-                bgt_rows.append({
-                    "Budget Date":     pd.Timestamp(f"{yr}-{mo:02d}-01"),
-                    "Store ID":        sid,
-                    "Budget Sales":    int(rng.integers(18_000, 52_000)),
-                    "Budget Quantity": int(rng.integers(300, 900)),
-                })
-    budget = pd.DataFrame(bgt_rows)
-    budget["Year"]  = budget["Budget Date"].dt.year
-    budget["Month"] = budget["Budget Date"].dt.month
-
-    # ── Enrich sales ──────────────────────────────────────────────────────────
-    sales["Year"]    = sales["Order Date"].dt.year
-    sales["Month"]   = sales["Order Date"].dt.month
-    sales["Quarter"] = "Q" + sales["Order Date"].dt.quarter.astype(str)
-    sign = sales["Order Type"].map({"Sales": 1, "Return": -1})
-    sales["Net Sales"] = sales["Sales"]    * sign
-    sales["Net Cost"]  = sales["Cost"]     * sign
-    sales["Net Qty"]   = sales["Quantity"] * sign
+    # Ensure Quarter column is a string like "Q1"
+    if "Quarter" not in sales.columns:
+        sales["Quarter"] = "Q" + sales["Order Date"].dt.quarter.astype(str)
+    else:
+        sales["Quarter"] = "Q" + sales["Quarter"].astype(str)
 
     return dict(sales=sales, budget=budget, store=store,
                 product=product, customer=customer)
 
 
+# ── DEAD CODE BELOW (kept for reference only — not executed) ─────────────────
+
+
 # load once
 _t0 = time.perf_counter()
 DATA = generate_data()
+
 _load_ms = (time.perf_counter() - _t0) * 1000
 
 # ══════════════════════════════════════════════════════════════════════════════
