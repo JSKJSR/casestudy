@@ -200,11 +200,11 @@ _load_ms = (time.perf_counter() - _t0) * 1000
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
-def fmt(v, mode="€"):
-    if mode == "€":
-        if abs(v) >= 1_000_000: return f"€{v/1_000_000:.2f}M"
-        if abs(v) >= 1_000:     return f"€{v/1_000:.1f}K"
-        return f"€{v:,.0f}"
+def fmt(v, mode="$"):
+    if mode == "$":
+        if abs(v) >= 1_000_000: return f"${v/1_000_000:.2f}M"
+        if abs(v) >= 1_000:     return f"${v/1_000:.1f}K"
+        return f"${v:,.0f}"
     s = "+" if v >= 0 else ""
     return f"{s}{v:.1f}%"
 
@@ -381,27 +381,62 @@ if page == "Executive Summary":
     ly  = ly_net_sales()
     vs_ly = (K["net_sales"] / ly - 1) * 100 if ly else 0
 
-    c1,c2,c3,c4,c5,c6,c7,c8 = st.columns(8)
-    c1.metric("Gross Sales",    fmt(K["gross_sales"]))
-    c2.metric("Net Sales",      fmt(K["net_sales"]),
-              delta=f"{fmt(vs_ly,'%')} vs LY",
-              delta_color="normal" if vs_ly >= 0 else "inverse")
-    c3.metric("vs Budget",      fmt(K["vs_bgt"],"%"),
-              delta=fmt(K["vs_bgt_abs"]),
-              delta_color="normal" if K["vs_bgt"] >= 0 else "inverse")
-    c4.metric("Gross Profit",   fmt(K["gross_profit"]))
-    c5.metric("Profit Margin",  f"{K['profit_margin']:.1f}%")
-    c6.metric("Total Orders",   f"{K['total_orders']:,}")
-    c7.metric("AOV",            fmt(K["aov"]))
-    c8.metric("Return Rate",    f"{K['return_rate']:.1f}%",
-              delta_color="inverse")
+    # ── Row 1: Sales waterfall card + remaining KPIs ──────────────────────────
+    col_sales, col_rest = st.columns([2, 5])
+
+    with col_sales:
+        vs_ly_color = "#107C10" if vs_ly >= 0 else "#D13438"
+        vs_ly_arrow = "▲" if vs_ly >= 0 else "▼"
+        st.markdown(f"""
+<div style="background:#FFFFFF;border-radius:8px;padding:16px 20px;
+            box-shadow:0 1px 4px rgba(0,0,0,.08);border-top:3px solid #0078D4;height:100%;">
+  <div style="font-size:10px;font-weight:700;text-transform:uppercase;
+              letter-spacing:.6px;color:#605E5C;margin-bottom:10px;">
+    Revenue Breakdown
+  </div>
+
+  <div style="display:flex;justify-content:space-between;align-items:baseline;
+              padding:6px 0;border-bottom:1px solid #F0F2F6;">
+    <span style="font-size:12px;color:#605E5C;">Gross Sales</span>
+    <span style="font-size:16px;font-weight:700;color:#252423;">{fmt(K['gross_sales'])}</span>
+  </div>
+
+  <div style="display:flex;justify-content:space-between;align-items:baseline;
+              padding:6px 0;border-bottom:1px solid #F0F2F6;">
+    <span style="font-size:12px;color:#D13438;">− Returns</span>
+    <span style="font-size:14px;font-weight:600;color:#D13438;">({fmt(K['return_sales'])})</span>
+  </div>
+
+  <div style="display:flex;justify-content:space-between;align-items:baseline;
+              padding:8px 0 4px 0;">
+    <span style="font-size:13px;font-weight:700;color:#0078D4;">Net Sales</span>
+    <span style="font-size:20px;font-weight:700;color:#0078D4;">{fmt(K['net_sales'])}</span>
+  </div>
+
+  <div style="font-size:11px;color:{vs_ly_color};margin-top:4px;">
+    {vs_ly_arrow} {fmt(vs_ly,'%')} vs Prior Year
+  </div>
+  <div style="font-size:11px;color:#605E5C;margin-top:2px;">
+    Return Rate: <b>{K['return_rate']:.1f}%</b>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    with col_rest:
+        c3,c4,c5,c6,c7,c8 = st.columns(6)
+        c3.metric("vs Budget",      fmt(K["vs_bgt"],"%"),
+                  delta=fmt(K["vs_bgt_abs"]),
+                  delta_color="normal" if K["vs_bgt"] >= 0 else "inverse")
+        c4.metric("Gross Profit",   fmt(K["gross_profit"]))
+        c5.metric("Profit Margin",  f"{K['profit_margin']:.1f}%")
+        c6.metric("Total Orders",   f"{K['total_orders']:,}")
+        c7.metric("AOV",            fmt(K["aov"]))
+        c8.metric("LY Revenue",     fmt(ly))
 
     # ── 2nd KPI row ───────────────────────────────────────────────────────────
-    r1,r2,r3,r4 = st.columns(4)
-    r1.metric("Return Sales",   fmt(K["return_sales"]))
-    r2.metric("Net COGS",       fmt(K["net_cogs"]))
-    r3.metric("Units / Order",  f"{K['units_per_order']:.2f}")
-    r4.metric("LY Revenue",     fmt(ly))
+    r1,r2,r3 = st.columns(3)
+    r1.metric("Net COGS",       fmt(K["net_cogs"]))
+    r2.metric("Units / Order",  f"{K['units_per_order']:.2f}")
+    r3.metric("Total Orders (Sales)", f"{K['total_orders']:,}")
 
     # ── YTD strip ─────────────────────────────────────────────────────────────
     max_month  = sales["Month"].max() if not sales.empty else 12
