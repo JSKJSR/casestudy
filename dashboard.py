@@ -463,33 +463,78 @@ if page == "Executive Summary":
             footer="Orders = sales transactions only (returns excluded)"
         ), unsafe_allow_html=True)
 
-    # ── Geography donut ────────────────────────────────────────────────────────
+    # ── Geography: donut (revenue share) + store status bar ───────────────────
     st.markdown('<p class="sec-lbl">Geography</p>', unsafe_allow_html=True)
+
     cnt = (sales.merge(store_raw[["Store ID","Store Country"]], on="Store ID", how="left")
            .groupby("Store Country")["Net Sales"].sum().reset_index()
            .sort_values("Net Sales", ascending=False))
     cnt["share"] = cnt["Net Sales"] / cnt["Net Sales"].sum() * 100
     cnt["label"] = cnt["Store Country"] + "<br>" + cnt["share"].apply(lambda v: f"{v:.1f}%")
+    country_order = cnt["Store Country"].tolist()
+    country_colors = {c: col for c, col in zip(country_order,
+                      [C["blue"], C["teal"], C["amber"], C["purple"]])}
 
-    fig_geo = go.Figure(go.Pie(
-        labels=cnt["Store Country"],
-        values=cnt["Net Sales"],
-        text=cnt["label"],
-        textinfo="text",
-        hovertemplate="<b>%{label}</b><br>Revenue: %{value:$,.0f}<br>Share: %{percent}<extra></extra>",
-        hole=0.55,
-        marker=dict(colors=[C["blue"], C["teal"], C["amber"], C["purple"]],
-                    line=dict(color="#FFFFFF", width=2)),
-        sort=False,
-    ))
-    fig_geo.add_annotation(text="Revenue<br>by Country", x=0.5, y=0.5,
-                           font=dict(size=12, color=C["grey"]), showarrow=False)
-    fig_geo.update_layout(height=280, showlegend=True,
-                          legend=dict(orientation="h", y=-0.1),
-                          margin=dict(t=10, b=40, l=10, r=10),
-                          plot_bgcolor=C["bg"], paper_bgcolor=C["bg"],
-                          font=dict(size=11, color="#252423", family="Segoe UI, sans-serif"))
-    st.plotly_chart(fig_geo, use_container_width=True)
+    # Store counts per country × status (filtered to valid stores)
+    st_status = (store_raw[store_raw["Store ID"].isin(valid_stores)]
+                 .groupby(["Store Country","Store Status"])["Store ID"].count()
+                 .reset_index(name="Count"))
+    st_total  = st_status.groupby("Store Country")["Count"].sum().reset_index(name="Total")
+
+    geo_l, geo_r = st.columns([3, 2])
+
+    with geo_l:
+        fig_donut = go.Figure(go.Pie(
+            labels=cnt["Store Country"],
+            values=cnt["Net Sales"],
+            text=cnt["label"],
+            textinfo="text",
+            hovertemplate="<b>%{label}</b><br>Revenue: %{value:$,.0f}<br>Share: %{percent}<extra></extra>",
+            hole=0.55,
+            marker=dict(colors=[C["blue"], C["teal"], C["amber"], C["purple"]],
+                        line=dict(color="#FFFFFF", width=2)),
+            sort=False,
+        ))
+        fig_donut.add_annotation(text="Revenue<br>Share", x=0.5, y=0.5,
+                                 font=dict(size=12, color=C["grey"]), showarrow=False)
+        fig_donut.update_layout(height=280, showlegend=True,
+                                legend=dict(orientation="h", y=-0.08),
+                                margin=dict(t=10, b=40, l=10, r=10),
+                                plot_bgcolor=C["bg"], paper_bgcolor=C["bg"],
+                                font=dict(size=11, color="#252423", family="Segoe UI, sans-serif"))
+        st.plotly_chart(fig_donut, use_container_width=True)
+
+    with geo_r:
+        fig_stores = go.Figure()
+        for status, color in [("Open", C["green"]), ("Closed", C["red"])]:
+            sub = st_status[st_status["Store Status"] == status].merge(
+                st_total, on="Store Country")
+            # Align to country order
+            sub = sub.set_index("Store Country").reindex(country_order).fillna(0).reset_index()
+            fig_stores.add_trace(go.Bar(
+                y=sub["Store Country"], x=sub["Count"],
+                name=status, orientation="h",
+                marker_color=color, opacity=0.85,
+                text=sub["Count"].astype(int).astype(str),
+                textposition="inside", insidetextanchor="middle",
+            ))
+        # Annotate total stores on the right of each bar
+        for _, row in st_total.iterrows():
+            fig_stores.add_annotation(
+                y=row["Store Country"], x=row["Total"] + 0.2,
+                text=f"<b>{int(row['Total'])} stores</b>",
+                showarrow=False, xanchor="left",
+                font=dict(size=11, color=C["grey"]),
+            )
+        fig_stores.update_layout(
+            title="Stores: Open vs Closed", barmode="stack",
+            height=280, xaxis=dict(showgrid=False, showticklabels=False),
+            yaxis=dict(showgrid=False),
+            legend=dict(orientation="h", y=-0.08),
+            margin=dict(t=36, b=40, l=10, r=60),
+            plot_bgcolor=C["bg"], paper_bgcolor=C["bg"],
+            font=dict(size=11, color="#252423", family="Segoe UI, sans-serif"))
+        st.plotly_chart(fig_stores, use_container_width=True)
 
     st.markdown('<p class="sec-lbl">Revenue Trend</p>', unsafe_allow_html=True)
 
