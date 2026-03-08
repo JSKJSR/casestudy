@@ -479,12 +479,14 @@ if page == "Executive Summary":
           .assign(Date=lambda d: pd.to_datetime(d[["Year","Month"]].assign(day=1))))
 
     ly_yrs = [y-1 for y in sel_years]
+    max_actual_date = ma["Date"].max()  # last month with real data
     ml = (sales_raw[sales_raw["Year"].isin(ly_yrs) &
                     sales_raw["Store ID"].isin(valid_stores) &
                     sales_raw["Product ID"].isin(valid_prods)]
           .groupby(["Year","Month"])["Net Sales"].sum().reset_index()
           .assign(Date=lambda d: pd.to_datetime(d[["Year","Month"]].assign(day=1))
                                  + pd.DateOffset(years=1)))
+    ml = ml[ml["Date"] <= max_actual_date]  # clip to actual data range
 
     # Outlier detection on total monthly net sales
     if len(ma) >= 4:
