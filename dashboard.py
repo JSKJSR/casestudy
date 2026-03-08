@@ -465,12 +465,19 @@ if page == "Executive Summary":
 
     st.markdown('<p class="sec-lbl">Revenue Trend</p>', unsafe_allow_html=True)
 
-    # ── Monthly Actual vs Budget vs LY ────────────────────────────────────────
-    ma = (sales.groupby(["Year","Month"])["Net Sales"].sum().reset_index()
-          .assign(Date=lambda d: pd.to_datetime(d[["Year","Month"]].assign(day=1)))
-          .sort_values("Date"))
+    # ── Monthly Actual (by Store Channel) vs Budget vs LY ────────────────────
+    sales_ch = sales.merge(store_raw[["Store ID","Store Channel"]], on="Store ID", how="left")
+
+    ma_ch = (sales_ch.groupby(["Year","Month","Store Channel"])["Net Sales"].sum()
+             .reset_index()
+             .assign(Date=lambda d: pd.to_datetime(d[["Year","Month"]].assign(day=1)))
+             .sort_values("Date"))
+
+    ma = (ma_ch.groupby("Date")["Net Sales"].sum().reset_index())
+
     mb = (budget.groupby(["Year","Month"])["Budget Sales"].sum().reset_index()
           .assign(Date=lambda d: pd.to_datetime(d[["Year","Month"]].assign(day=1))))
+
     ly_yrs = [y-1 for y in sel_years]
     ml = (sales_raw[sales_raw["Year"].isin(ly_yrs) &
                     sales_raw["Store ID"].isin(valid_stores) &
@@ -479,7 +486,7 @@ if page == "Executive Summary":
           .assign(Date=lambda d: pd.to_datetime(d[["Year","Month"]].assign(day=1))
                                  + pd.DateOffset(years=1)))
 
-    # Outlier detection: flag months > 1.5 IQR from Q1/Q3
+    # Outlier detection on total monthly net sales
     if len(ma) >= 4:
         q1, q3 = ma["Net Sales"].quantile([0.25, 0.75])
         iqr = q3 - q1
@@ -487,31 +494,40 @@ if page == "Executive Summary":
     else:
         _outliers = pd.DataFrame()
 
+    channels      = sorted(ma_ch["Store Channel"].dropna().unique())
+    ch_colors     = {"Full Price": C["blue"], "Outlet": C["teal"]}
+    ch_color_list = [ch_colors.get(c, C["purple"]) for c in channels]
+
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=ma["Date"], y=ma["Net Sales"],
-                         name="Actual", marker_color=C["blue"], opacity=.85))
-    fig.add_trace(go.Scatter(x=mb["Date"], y=mb["Budget Sales"],
-                             name="Budget",
-                             line=dict(color=C["amber"], width=2, dash="dash")))
+    for ch, col in zip(channels, ch_color_list):
+        ch_data = ma_ch[ma_ch["Store Channel"] == ch]
+        fig.add_trace(go.Bar(
+            x=ch_data["Date"], y=ch_data["Net Sales"],
+            name=ch, marker_color=col, opacity=.85,
+        ))
+    fig.add_trace(go.Scatter(
+        x=mb["Date"], y=mb["Budget Sales"],
+        name="Budget", line=dict(color=C["amber"], width=2, dash="dash"),
+    ))
     if not ml.empty:
-        fig.add_trace(go.Scatter(x=ml["Date"], y=ml["Net Sales"],
-                                 name="Prior Year",
-                                 line=dict(color=C["grey"], width=1.5, dash="dot")))
+        fig.add_trace(go.Scatter(
+            x=ml["Date"], y=ml["Net Sales"],
+            name="Prior Year", line=dict(color=C["grey"], width=1.5, dash="dot"),
+        ))
     if not _outliers.empty:
         fig.add_trace(go.Scatter(
             x=_outliers["Date"], y=_outliers["Net Sales"],
-            mode="markers+text",
-            name="⚠ Outlier",
+            mode="markers+text", name="⚠ Outlier",
             marker=dict(color=C["red"], size=12, symbol="circle-open", line=dict(width=2)),
-            text=_outliers["Net Sales"].apply(fmt),
-            textposition="top center",
+            text=_outliers["Net Sales"].apply(fmt), textposition="top center",
         ))
-    fig.update_layout(title="Monthly Net Revenue · Actual vs Budget vs Prior Year  (⚠ = statistical outlier ±1.5 IQR)",
-                      height=320, barmode="overlay",
-                      legend=dict(orientation="h", y=-0.22),
-                      xaxis=dict(showgrid=False),
-                      yaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="€"),
-                      **CHART)
+    fig.update_layout(
+        title="Monthly Net Revenue by Store Channel · vs Budget vs Prior Year  (⚠ = outlier ±1.5 IQR)",
+        height=340, barmode="stack",
+        legend=dict(orientation="h", y=-0.22),
+        xaxis=dict(showgrid=False),
+        yaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
+        **CHART)
     st.plotly_chart(fig, use_container_width=True)
 
     # ── Row: Annual dual-axis + Segment donut + Channel ───────────────────────
@@ -537,7 +553,7 @@ if page == "Executive Summary":
                        secondary_y=True)
         fig2.update_layout(title="Annual Actual vs Budget", barmode="group",
                            height=280, legend=dict(orientation="h",y=-0.28), **CHART)
-        fig2.update_yaxes(tickprefix="€", secondary_y=False,
+        fig2.update_yaxes(tickprefix="$", secondary_y=False,
                           showgrid=True, gridcolor=C["grid"])
         fig2.update_yaxes(ticksuffix="%", secondary_y=True, showgrid=False)
         st.plotly_chart(fig2, use_container_width=True)
@@ -562,7 +578,7 @@ if page == "Executive Summary":
                                 text=ch["lbl"], textposition="outside",
                                 marker_color=[C["blue"],C["teal"],C["amber"]]))
         fig4.update_layout(title="Revenue by Channel", height=280, showlegend=False,
-                           yaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="€"),
+                           yaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
                            **CHART)
         st.plotly_chart(fig4, use_container_width=True)
 
@@ -621,15 +637,15 @@ elif page == "Sales Performance":
 
     fig_v = go.Figure()
     fig_v.add_trace(go.Bar(x=mrg["Date"], y=mrg["Var"],
-                           marker_color=mrg["Col"], name="€ Variance", opacity=.85))
+                           marker_color=mrg["Col"], name="$ Variance", opacity=.85))
     fig_v.add_trace(go.Scatter(x=mrg["Date"], y=mrg["Var%"],
                                name="% Variance", yaxis="y2",
                                line=dict(color=C["navy"], width=1.5)))
     fig_v.add_hline(y=0, line_color="#374151", line_width=1)
     fig_v.update_layout(
-        title="Monthly Revenue Variance vs Budget  (bar = €, line = %)",
+        title="Monthly Revenue Variance vs Budget  (bar = $, line = %)",
         height=290,
-        yaxis=dict(title="€ Variance", showgrid=True, gridcolor=C["grid"], tickprefix="€"),
+        yaxis=dict(title="$ Variance", showgrid=True, gridcolor=C["grid"], tickprefix="$"),
         yaxis2=dict(title="% Variance", overlaying="y", side="right",
                     ticksuffix="%", showgrid=False),
         legend=dict(orientation="h", y=-0.22), **CHART)
@@ -669,7 +685,7 @@ elif page == "Sales Performance":
                                    line=dict(color=C["green"], width=2, dash="dash")))
         fig_r.update_layout(title="Rolling Revenue Averages", height=260,
                             legend=dict(orientation="h", y=-0.28),
-                            yaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="€"),
+                            yaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
                             **CHART)
         st.plotly_chart(fig_r, use_container_width=True)
 
@@ -707,7 +723,7 @@ elif page == "Sales Performance":
                                   marker_color=C["red"], opacity=.8))
         fig_rc.update_layout(title="Return Value by Category", height=230,
                              yaxis=dict(showgrid=True, gridcolor=C["grid"],
-                                        tickprefix="€"), **CHART)
+                                        tickprefix="$"), **CHART)
         st.plotly_chart(fig_rc, use_container_width=True)
 
     st.markdown('<p class="sec-lbl">Discount Impact</p>', unsafe_allow_html=True)
@@ -727,7 +743,7 @@ elif page == "Sales Performance":
                                   marker_color=C["blue"]))
         fig_d1.update_layout(title="Revenue by Discount Band", height=230,
                              yaxis=dict(showgrid=True, gridcolor=C["grid"],
-                                        tickprefix="€"), **CHART)
+                                        tickprefix="$"), **CHART)
         st.plotly_chart(fig_d1, use_container_width=True)
     with dd2:
         fig_d2 = go.Figure(go.Bar(x=disc["Band"], y=disc["Txn"],
@@ -790,7 +806,7 @@ elif page == "Product & Category":
         fig_c.update_layout(
             title="Revenue & GM% by Category",
             height=360,
-            xaxis=dict(title="Revenue (€)", showgrid=True, gridcolor=C["grid"]),
+            xaxis=dict(title="Revenue ($)", showgrid=True, gridcolor=C["grid"]),
             xaxis2=dict(title="GM %", overlaying="x", side="top",
                         ticksuffix="%", showgrid=False),
             legend=dict(orientation="h", y=-0.15), **CHART)
@@ -857,7 +873,7 @@ elif page == "Product & Category":
                                   marker_color=C["teal"]))
         fig_lc.update_layout(title="Revenue by Lifecycle", height=240,
                              yaxis=dict(showgrid=True, gridcolor=C["grid"],
-                                        tickprefix="€"), **CHART)
+                                        tickprefix="$"), **CHART)
         st.plotly_chart(fig_lc, use_container_width=True)
 
     with pm3:
@@ -868,7 +884,7 @@ elif page == "Product & Category":
                                   orientation="h", marker_color=C["purple"]))
         fig_br.update_layout(title="Top 8 Brands", height=240,
                              xaxis=dict(showgrid=True, gridcolor=C["grid"],
-                                        tickprefix="€"), **CHART)
+                                        tickprefix="$"), **CHART)
         st.plotly_chart(fig_br, use_container_width=True)
 
 
@@ -931,8 +947,8 @@ elif page == "Store Network":
     k3.metric("Net Sales",      fmt(KS["net_sales"]))
     k4.metric("Gross Profit",   fmt(KS["gross_profit"]))
     k5.metric("Profit Margin",  f"{KS['profit_margin']:.1f}%")
-    k6.metric("Avg AOV",        f"€{st_agg['AOV'].mean():.0f}")
-    k7.metric("Avg €/SQM",      f"€{st_agg['Sales/SQM'].mean():.0f}")
+    k6.metric("Avg AOV",        f"${st_agg['AOV'].mean():.0f}")
+    k7.metric("Avg $/SQM",      f"${st_agg['Sales/SQM'].mean():.0f}")
 
     st.markdown('<p class="sec-lbl">Store vs Budget</p>', unsafe_allow_html=True)
     cs1, cs2 = st.columns([3,2])
@@ -950,7 +966,7 @@ elif page == "Store Network":
             title="Store Revenue: Actual vs Budget",
             barmode="overlay", height=500,
             legend=dict(orientation="h", y=-0.08),
-            xaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="€"),
+            xaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
             **CHART)
         st.plotly_chart(fig_sb, use_container_width=True)
 
@@ -959,7 +975,7 @@ elif page == "Store Network":
             st_agg, x="Sales/SQM", y="vs Bgt%",
             size="Revenue", color="Store Country",
             hover_name="Store Name",
-            title="Efficiency · €/SQM vs vs Budget %",
+            title="Efficiency · $/SQM vs vs Budget %",
             size_max=42,
             color_discrete_sequence=[C["blue"],C["amber"],C["green"],C["purple"]],
         )
@@ -968,7 +984,7 @@ elif page == "Store Network":
                          line_dash="dot", line_color=C["grey"], opacity=.4)
         fig_sc.update_layout(
             height=500,
-            xaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="€"),
+            xaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
             yaxis=dict(showgrid=True, gridcolor=C["grid"], ticksuffix="%"),
             **CHART)
         st.plotly_chart(fig_sc, use_container_width=True)
@@ -1000,7 +1016,7 @@ elif page == "Store Network":
     fig_lfl.update_layout(title="LFL vs Total Network – Monthly Revenue",
                           height=230, legend=dict(orientation="h",y=-0.25),
                           xaxis=dict(showgrid=False),
-                          yaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="€"),
+                          yaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
                           **CHART)
     st.plotly_chart(fig_lfl, use_container_width=True)
 
@@ -1017,7 +1033,7 @@ elif page == "Store Network":
                                   marker_color=C["navy"]))
         fig_am.update_layout(title="Revenue by Area Manager", height=260,
                              yaxis=dict(showgrid=True, gridcolor=C["grid"],
-                                        tickprefix="€"), **CHART)
+                                        tickprefix="$"), **CHART)
         st.plotly_chart(fig_am, use_container_width=True)
 
     with ma2:
@@ -1035,14 +1051,14 @@ elif page == "Store Network":
                   "AOV","Units/Order","Sales/SQM"]].copy()
     tbl.columns = ["Store","Country","Channel","Format","Status",
                    "Gross Sales","Net Sales","Budget","vs Bgt%",
-                   "Gross Profit","GM%","Return Rate%","AOV","Units/Order","€/SQM"]
+                   "Gross Profit","GM%","Return Rate%","AOV","Units/Order","$/SQM"]
     st.dataframe(
         tbl.style
-        .format({"Gross Sales":"€{:,.0f}","Net Sales":"€{:,.0f}",
-                 "Budget":"€{:,.0f}","vs Bgt%":"{:+.1f}%",
-                 "Gross Profit":"€{:,.0f}","GM%":"{:.1f}%",
-                 "Return Rate%":"{:.1f}%","AOV":"€{:.0f}",
-                 "Units/Order":"{:.2f}","€/SQM":"€{:.0f}"})
+        .format({"Gross Sales":"${:,.0f}","Net Sales":"${:,.0f}",
+                 "Budget":"${:,.0f}","vs Bgt%":"{:+.1f}%",
+                 "Gross Profit":"${:,.0f}","GM%":"{:.1f}%",
+                 "Return Rate%":"{:.1f}%","AOV":"${:.0f}",
+                 "Units/Order":"{:.2f}","$/SQM":"${:.0f}"})
         .background_gradient(subset=["Net Sales"], cmap="Blues")
         .map(lambda v: "color:#107C10;font-weight:700" if isinstance(v,(int,float)) and v>=0
              else ("color:#D13438;font-weight:700" if isinstance(v,(int,float)) else ""),
