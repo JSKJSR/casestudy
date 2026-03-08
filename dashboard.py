@@ -1538,13 +1538,19 @@ elif page == "Insights & Actions":
         cat_decline = pd.DataFrame()
         cat_growth  = pd.DataFrame()
 
-    # SKU-level GM
-    sku_agg = (ps.groupby(["Product ID","Product Name","Category","Brand"])
-               .agg(Revenue=("Net Sales","sum"), Cost=("Net Cost","sum"),
-                    Qty=("Net Qty","sum"), RetQty=("Return Qty","sum"))
-               .reset_index())
-    sku_agg["GM%"]      = (sku_agg["Revenue"] - sku_agg["Cost"]) / sku_agg["Revenue"].replace(0, pd.NA) * 100
-    sku_agg["Ret%"]     = sku_agg["RetQty"] / (sku_agg["Qty"] + sku_agg["RetQty"]).replace(0, pd.NA) * 100
+    # SKU-level GM  (returns are separate rows with Order Type == "Returns")
+    ps_sales   = ps[ps["Order Type"] == "Sales"]
+    ps_returns = ps[ps["Order Type"] == "Returns"]
+    sku_s = (ps_sales.groupby(["Product ID","Product Name","Category","Brand"])
+             .agg(Revenue=("Net Sales","sum"), Cost=("Net Cost","sum"),
+                  Qty=("Net Qty","sum"))
+             .reset_index())
+    sku_r = (ps_returns.groupby("Product ID")["Quantity"]
+             .sum().abs().reset_index()
+             .rename(columns={"Quantity":"RetQty"}))
+    sku_agg = sku_s.merge(sku_r, on="Product ID", how="left").fillna({"RetQty": 0})
+    sku_agg["GM%"]  = (sku_agg["Revenue"] - sku_agg["Cost"]) / sku_agg["Revenue"].replace(0, pd.NA) * 100
+    sku_agg["Ret%"] = sku_agg["RetQty"] / (sku_agg["Qty"] + sku_agg["RetQty"]).replace(0, pd.NA) * 100
     neg_gm_prods        = sku_agg[sku_agg["GM%"] < 0].sort_values("GM%")
     top10_rev           = sku_agg.nlargest(10, "Revenue")
     top10_avg_gm        = top10_rev["GM%"].mean()
@@ -1553,10 +1559,15 @@ elif page == "Insights & Actions":
     high_ret_skus       = sku_agg[sku_agg["Ret%"] > 15].sort_values("Ret%", ascending=False)
 
     # Category return rates
-    cat_ret = (ps.groupby("Category")
-               .agg(RetQty=("Return Qty","sum"), SalesQty=("Net Qty","sum"))
+    cat_sales_qty = (ps_sales.groupby("Category")["Quantity"].sum()
+                     .rename("SalesQty").reset_index())
+    cat_ret_qty   = (ps_returns.groupby("Category")["Quantity"].sum().abs()
+                     .rename("RetQty").reset_index())
+    cat_ret = (cat_sales_qty.merge(cat_ret_qty, on="Category", how="left")
+               .fillna({"RetQty": 0})
                .assign(**{"Ret%": lambda d: d["RetQty"] / (d["SalesQty"]+d["RetQty"]).replace(0,pd.NA)*100})
-               .sort_values("Ret%", ascending=False))
+               .sort_values("Ret%", ascending=False)
+               .set_index("Category"))
     high_ret_cats = cat_ret[cat_ret["Ret%"] > 12]
 
     # Concentration: top brand revenue share
