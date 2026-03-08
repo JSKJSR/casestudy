@@ -486,8 +486,9 @@ if page == "Executive Summary":
                            font=dict(size=12, color=C["grey"]), showarrow=False)
     fig_geo.update_layout(height=280, showlegend=True,
                           legend=dict(orientation="h", y=-0.1),
-                          margin=dict(t=10, b=10, l=10, r=10),
-                          **CHART)
+                          margin=dict(t=10, b=40, l=10, r=10),
+                          plot_bgcolor=C["bg"], paper_bgcolor=C["bg"],
+                          font=dict(size=11, color="#252423", family="Segoe UI, sans-serif"))
     st.plotly_chart(fig_geo, use_container_width=True)
 
     st.markdown('<p class="sec-lbl">Revenue Trend</p>', unsafe_allow_html=True)
