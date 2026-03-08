@@ -463,6 +463,16 @@ if page == "Executive Summary":
             footer="Orders = sales transactions only (returns excluded)"
         ), unsafe_allow_html=True)
 
+    # ── Country KPI strip (Geography) ─────────────────────────────────────────
+    st.markdown('<p class="sec-lbl">Geography</p>', unsafe_allow_html=True)
+    cnt = (sales.merge(store_raw[["Store ID","Store Country"]], on="Store ID", how="left")
+           .groupby("Store Country")["Net Sales"].sum().reset_index()
+           .sort_values("Net Sales", ascending=False))
+    cnt["share"] = cnt["Net Sales"] / cnt["Net Sales"].sum() * 100
+    for col, (_, row) in zip(st.columns(len(cnt)), cnt.iterrows()):
+        col.metric(row["Store Country"], fmt(row["Net Sales"]),
+                   f"{row['share']:.0f}% of total")
+
     st.markdown('<p class="sec-lbl">Revenue Trend</p>', unsafe_allow_html=True)
 
     # ── Quarterly Revenue vs Target vs Last Year ──────────────────────────────
@@ -495,9 +505,10 @@ if page == "Executive Summary":
         x=q_merged["Label"], y=q_merged["Net Sales"],
         name="Revenue", marker_color=C["blue"], opacity=.85,
     ))
-    fig.add_trace(go.Bar(
+    fig.add_trace(go.Scatter(
         x=q_merged["Label"], y=q_merged["Budget Sales"],
-        name="Budget", marker_color=C["amber"], opacity=.6,
+        name="Budget", line=dict(color=C["amber"], width=2, dash="dash"),
+        mode="lines+markers", marker=dict(size=6),
     ))
     fig.add_trace(go.Scatter(
         x=q_merged["Label"], y=q_merged["LY Sales"],
@@ -506,7 +517,7 @@ if page == "Executive Summary":
     ))
     fig.update_layout(
         title="Quarterly Net Revenue vs Budget vs Last Year",
-        height=340, barmode="group",
+        height=340,
         legend=dict(orientation="h", y=-0.22),
         xaxis=dict(showgrid=False),
         yaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
@@ -575,15 +586,6 @@ if page == "Executive Summary":
     fhm.update_layout(height=200, **CHART)
     st.plotly_chart(fhm, use_container_width=True)
 
-    # ── Country KPI strip ─────────────────────────────────────────────────────
-    st.markdown('<p class="sec-lbl">Geography</p>', unsafe_allow_html=True)
-    cnt = (sales.merge(store_raw[["Store ID","Store Country"]],on="Store ID",how="left")
-           .groupby("Store Country")["Net Sales"].sum().reset_index()
-           .sort_values("Net Sales", ascending=False))
-    cnt["share"] = cnt["Net Sales"] / cnt["Net Sales"].sum() * 100
-    for col, (_, row) in zip(st.columns(len(cnt)), cnt.iterrows()):
-        col.metric(row["Store Country"], fmt(row["Net Sales"]),
-                   f"{row['share']:.0f}% of total")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
