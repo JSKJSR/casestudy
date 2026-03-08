@@ -23,78 +23,143 @@ st.set_page_config(
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
-# THEME & STYLES  — Power BI look
+# THEME & STYLES  — consistent light mode (Power BI-inspired)
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("""
 <style>
-/* ── Reset & background ── */
-html, body, [class*="css"] { font-family: "Segoe UI", sans-serif; }
-.block-container { padding: 1rem 1.5rem 0.5rem 1.5rem; background:#F3F4F6; }
+/* ── Global font & page background ── */
+html, body, [data-testid="stAppViewContainer"] {
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+.block-container {
+    padding: 1rem 1.5rem 1rem 1.5rem;
+    max-width: 100%;
+    background: #F0F2F6;
+}
 
-/* ── Sidebar ── */
-section[data-testid="stSidebar"] > div:first-child { background:#1E3A5F !important; }
-section[data-testid="stSidebar"] * { color:#E2E8F0 !important; }
+/* ── Sidebar — light ── */
+section[data-testid="stSidebar"] > div:first-child {
+    background: #FFFFFF !important;
+    border-right: 1px solid #E1DFDD;
+}
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3,
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] div {
+    color: #252423 !important;
+}
 section[data-testid="stSidebar"] .stRadio [role="radiogroup"] label {
-    background: rgba(255,255,255,0.06); border-radius:6px;
-    padding:6px 12px; margin-bottom:4px; font-size:13px;
+    background: #F0F2F6;
+    border-radius: 6px;
+    padding: 7px 12px;
+    margin-bottom: 3px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #252423 !important;
+    border: 1px solid transparent;
+    transition: all .15s;
 }
 section[data-testid="stSidebar"] .stRadio [role="radiogroup"] label:hover {
-    background: rgba(255,255,255,0.14);
+    background: #E1EBF7;
+    border-color: #0078D4;
 }
-section[data-testid="stSidebar"] hr { border-color:rgba(255,255,255,0.15); }
+section[data-testid="stSidebar"] hr {
+    border-color: #E1DFDD;
+}
+/* Sidebar filter labels */
+section[data-testid="stSidebar"] .stMultiSelect label,
+section[data-testid="stSidebar"] .stSelectbox label {
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    color: #605E5C !important;
+}
 
 /* ── KPI metric cards ── */
 div[data-testid="stMetric"] {
-    background:#FFFFFF; border-radius:8px;
-    padding:14px 18px 10px 18px;
-    box-shadow:0 1px 6px rgba(0,0,0,.08);
-    border-top:3px solid #0078D4;
+    background: #FFFFFF;
+    border-radius: 8px;
+    padding: 14px 18px 12px 18px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    border-top: 3px solid #0078D4;
 }
 div[data-testid="stMetric"] > label {
-    font-size:10px !important; font-weight:700 !important;
-    text-transform:uppercase; letter-spacing:.6px; color:#6B7280 !important;
+    font-size: 10px !important;
+    font-weight: 700 !important;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    color: #605E5C !important;
 }
 div[data-testid="stMetric"] [data-testid="stMetricValue"] {
-    font-size:24px !important; font-weight:700 !important; color:#111827 !important;
+    font-size: 24px !important;
+    font-weight: 700 !important;
+    color: #252423 !important;
+}
+div[data-testid="stMetricDelta"] svg { vertical-align: middle; }
+
+/* ── Chart cards ── */
+div[data-testid="stPlotlyChart"] {
+    background: #FFFFFF;
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.07);
+    padding: 6px;
+}
+
+/* ── Dataframe ── */
+div[data-testid="stDataFrame"] {
+    background: #FFFFFF;
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.07);
+    padding: 4px;
 }
 
 /* ── Page headers ── */
-.pg-title { font-size:20px; font-weight:700; color:#1E3A5F; margin-bottom:0; }
-.pg-sub   { font-size:11px; color:#9CA3AF; margin-bottom:8px; letter-spacing:.3px; }
-.sec-lbl  {
-    font-size:10px; font-weight:700; text-transform:uppercase;
-    letter-spacing:1px; color:#9CA3AF; margin:16px 0 6px 0;
+.pg-title {
+    font-size: 20px; font-weight: 700;
+    color: #252423; margin-bottom: 0;
 }
-
-/* ── Chart card wrapper ── */
-div[data-testid="stPlotlyChart"] {
-    background:white; border-radius:8px;
-    box-shadow:0 1px 6px rgba(0,0,0,.07); padding:4px;
+.pg-sub {
+    font-size: 11px; color: #605E5C;
+    margin-bottom: 10px; letter-spacing: .3px;
 }
-
-/* ── Insight pills ── */
-.ins       { background:#EFF6FF; border-left:4px solid #0078D4; border-radius:6px;
-             padding:9px 14px; margin-bottom:7px; font-size:13px; line-height:1.55; }
-.ins-warn  { background:#FFFBEB; border-left-color:#F59E0B; }
-.ins-good  { background:#F0FDF4; border-left-color:#22C55E; }
-.ins-red   { background:#FEF2F2; border-left-color:#EF4444; }
+.sec-lbl {
+    font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 1px;
+    color: #A19F9D; margin: 18px 0 6px 0;
+    border-bottom: 1px solid #E1DFDD;
+    padding-bottom: 4px;
+}
 </style>
 """, unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# COLOUR PALETTE
+# COLOUR PALETTE  — consistent light-mode tokens
 # ══════════════════════════════════════════════════════════════════════════════
 C = dict(
-    blue="#0078D4", navy="#1E3A5F",
-    green="#22C55E", red="#EF4444", amber="#F59E0B",
-    purple="#8B5CF6", teal="#14B8A6", grey="#6B7280",
-    bg="white", grid="#F3F4F6",
+    blue   = "#0078D4",   # Power BI primary
+    navy   = "#003966",   # deep accent
+    green  = "#107C10",   # success / positive
+    red    = "#D13438",   # danger / negative
+    amber  = "#FF8C00",   # warning / budget line
+    purple = "#744DA9",
+    teal   = "#008272",
+    grey   = "#605E5C",   # body text secondary
+    bg     = "#FFFFFF",   # card/chart background
+    page   = "#F0F2F6",   # page background
+    grid   = "#F0F2F6",   # chart gridlines
+    border = "#E1DFDD",   # subtle borders
 )
 
+# Shared Plotly layout defaults — white cards, light grid
 CHART = dict(
-    plot_bgcolor=C["bg"], paper_bgcolor=C["bg"],
-    margin=dict(t=36, b=14, l=6, r=6),
-    font=dict(size=11, color="#374151"),
+    plot_bgcolor  = C["bg"],
+    paper_bgcolor = C["bg"],
+    margin        = dict(t=36, b=14, l=6, r=6),
+    font          = dict(size=11, color="#252423", family="Segoe UI, sans-serif"),
 )
 
 
@@ -304,17 +369,31 @@ sales_raw   = DATA["sales"]
 budget_raw  = DATA["budget"]
 
 with st.sidebar:
-    st.markdown("## 🏪 Intersport")
-    st.markdown("**Sales Dashboard**")
-    st.divider()
+    # ── Brand header ──────────────────────────────────────────────────────────
+    st.markdown(
+        """
+        <div style="padding:8px 0 12px 0; border-bottom:1px solid #E1DFDD; margin-bottom:12px;">
+            <div style="font-size:18px; font-weight:700; color:#0078D4; line-height:1.2;">🏪 Intersport</div>
+            <div style="font-size:11px; color:#605E5C; font-weight:500; letter-spacing:.4px;">
+                C-SUITE SALES DASHBOARD
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     page = st.radio(
         "nav", ["Executive Summary","Sales Performance",
                 "Product & Category","Store Network"],
         label_visibility="collapsed",
     )
-    st.divider()
-    st.markdown("### Filters")
+
+    st.markdown(
+        '<p style="font-size:10px;font-weight:700;text-transform:uppercase;'
+        'letter-spacing:1px;color:#A19F9D;margin:18px 0 8px 0;'
+        'border-bottom:1px solid #E1DFDD;padding-bottom:4px;">Filters</p>',
+        unsafe_allow_html=True,
+    )
 
     all_years    = sorted(sales_raw["Year"].unique())
     all_countries= sorted(store_raw["Store Country"].unique())
@@ -326,8 +405,11 @@ with st.sidebar:
     sel_channels = st.multiselect("Channel",  all_channels,  default=all_channels)
     sel_cats     = st.multiselect("Category", all_cats,      default=all_cats)
 
-    st.divider()
-    st.caption("Intersport · 2022–2025 · C-Suite View")
+    st.markdown(
+        '<p style="font-size:10px;color:#A19F9D;margin-top:24px;">'
+        'Intersport · 2022–2025 · C-Suite</p>',
+        unsafe_allow_html=True,
+    )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FILTER APPLICATION
