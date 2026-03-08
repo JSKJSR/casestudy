@@ -463,33 +463,6 @@ if page == "Executive Summary":
             footer="Orders = sales transactions only (returns excluded)"
         ), unsafe_allow_html=True)
 
-    # ── YTD strip ─────────────────────────────────────────────────────────────
-    max_month  = sales["Month"].max() if not sales.empty else 12
-    ytd_sales_df  = sales[sales["Month"] <= max_month]
-    ytd_bgt_df    = budget[budget["Month"] <= max_month]
-    ly_yrs_ytd    = [y - 1 for y in sel_years]
-    ytd_ly_df     = sales_raw[
-        sales_raw["Year"].isin(ly_yrs_ytd) &
-        sales_raw["Store ID"].isin(valid_stores) &
-        sales_raw["Product ID"].isin(valid_prods) &
-        (sales_raw["Month"] <= max_month)
-    ]
-    K_ytd    = calc_kpis(ytd_sales_df, ytd_bgt_df)
-    K_ytd_ly = calc_kpis(ytd_ly_df)
-    vs_ytd_ly  = (K_ytd["net_sales"] / K_ytd_ly["net_sales"] - 1) * 100 if K_ytd_ly["net_sales"] else 0
-
-    st.markdown('<p class="sec-lbl">YTD Time Intelligence (Jan → latest month in selection)</p>',
-                unsafe_allow_html=True)
-    y1,y2,y3,y4 = st.columns(4)
-    y1.metric(f"YTD Net Sales (M{max_month:02d})", fmt(K_ytd["net_sales"]),
-              delta=f"{fmt(vs_ytd_ly,'%')} vs LY YTD",
-              delta_color="normal" if vs_ytd_ly >= 0 else "inverse")
-    y2.metric("YTD vs Budget",  fmt(K_ytd["vs_bgt"],"%"),
-              delta=fmt(K_ytd["vs_bgt_abs"]),
-              delta_color="normal" if K_ytd["vs_bgt"] >= 0 else "inverse")
-    y3.metric("YTD LY Net Sales", fmt(K_ytd_ly["net_sales"]))
-    y4.metric("YTD Profit Margin", f"{K_ytd['profit_margin']:.1f}%")
-
     st.markdown('<p class="sec-lbl">Revenue Trend</p>', unsafe_allow_html=True)
 
     # ── Monthly Actual vs Budget vs LY ────────────────────────────────────────
