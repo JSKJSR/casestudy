@@ -661,22 +661,82 @@ if page == "Executive Summary":
 elif page == "Sales Performance":
 
     st.markdown('<p class="pg-title">Sales Performance</p>', unsafe_allow_html=True)
-    st.markdown('<p class="pg-sub">Time intelligence · Budget variance · Returns · Discounts</p>', unsafe_allow_html=True)
+    st.markdown('<p class="pg-sub">Growth · Target · Mix · Efficiency · Margin</p>', unsafe_allow_html=True)
 
-    K2   = calc_kpis(sales, budget)
-    ly2  = ly_net_sales()
+    K2    = calc_kpis(sales, budget)
+    ly2   = ly_net_sales()
     vs_ly2 = (K2["net_sales"] / ly2 - 1) * 100 if ly2 else 0
     avg_d  = sales[sales["Order Type"]=="Sales"]["Discount"].mean() * 100
 
-    k1,k2,k3,k4,k5,k6 = st.columns(6)
-    k1.metric("Net Sales",      fmt(K2["net_sales"]))
-    k2.metric("Gross Profit",   fmt(K2["gross_profit"]))
-    k3.metric("Profit Margin",  f"{K2['profit_margin']:.1f}%")
-    k4.metric("vs Target",      fmt(K2["vs_bgt"],"%"))
-    k5.metric("vs LY",          fmt(vs_ly2,"%"))
-    k6.metric("Avg Discount",   f"{avg_d:.1f}%")
+    # ── Headline KPI strip ────────────────────────────────────────────────────
+    h1,h2,h3,h4,h5 = st.columns(5)
+    def _kpi(col, label, val, good=True):
+        color = C["green"] if good else C["red"]
+        col.markdown(f"""<div style='background:#fff;border-radius:8px;padding:14px 10px;
+            border:1px solid {C["border"]};text-align:center'>
+            <div style='font-size:11px;color:{C["grey"]};margin-bottom:4px'>{label}</div>
+            <div style='font-size:20px;font-weight:700;color:{color}'>{val}</div>
+        </div>""", unsafe_allow_html=True)
+    _kpi(h1, "Net Sales",      fmt(K2["net_sales"]),        True)
+    _kpi(h2, "vs Target",      fmt(K2["vs_bgt"],"%"),       K2["vs_bgt"] >= 0)
+    _kpi(h3, "vs Last Year",   fmt(vs_ly2,"%"),             vs_ly2 >= 0)
+    _kpi(h4, "Gross Margin",   f"{K2['profit_margin']:.1f}%", K2["profit_margin"] >= 40)
+    _kpi(h5, "Return Rate",    f"{K2['return_rate']:.1f}%", K2["return_rate"] <= 15)
+    st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
 
-    st.markdown('<p class="sec-lbl">Monthly Target Variance</p>', unsafe_allow_html=True)
+    # ══ Q1: Are we growing? ═══════════════════════════════════════════════════
+    st.markdown('<p class="sec-lbl">① Are we growing?</p>', unsafe_allow_html=True)
+
+    fall = (sales_raw[sales_raw["Store ID"].isin(valid_stores) &
+                      sales_raw["Product ID"].isin(valid_prods)]
+            .groupby(["Year","Quarter"])["Net Sales"].sum().reset_index()
+            .assign(Label=lambda d: d["Year"].astype(str) + " " + d["Quarter"].astype(str))
+            .sort_values(["Year","Quarter"]))
+    fall["YoY_abs"] = fall.groupby("Quarter")["Net Sales"].diff()
+    fall["YoY%"]    = fall.groupby("Quarter")["Net Sales"].pct_change() * 100
+    vis_fall = fall[fall["Year"].isin(sel_years)].copy()
+    vis_fall["bar_col"] = vis_fall["YoY%"].apply(
+        lambda v: C["green"] if (v is not None and v >= 0) else C["red"])
+
+    g1, g2 = st.columns([3,2])
+    with g1:
+        fig_g = go.Figure()
+        fig_g.add_trace(go.Bar(
+            x=vis_fall["Label"], y=vis_fall["Net Sales"],
+            name="Revenue", marker_color=C["blue"], opacity=.85,
+            text=vis_fall["Net Sales"].apply(fmt), textposition="outside",
+        ))
+        # YoY % as annotations above each bar
+        for _, row in vis_fall.dropna(subset=["YoY%"]).iterrows():
+            arrow = "▲" if row["YoY%"] >= 0 else "▼"
+            color = C["green"] if row["YoY%"] >= 0 else C["red"]
+            fig_g.add_annotation(x=row["Label"],
+                                 y=row["Net Sales"] * 1.12,
+                                 text=f"<span style='color:{color}'>{arrow}{abs(row['YoY%']):.0f}%</span>",
+                                 showarrow=False, font=dict(size=10))
+        fig_g.update_layout(title="Quarterly Revenue with YoY Growth %", height=300,
+                            xaxis=dict(showgrid=False),
+                            yaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
+                            **CHART)
+        st.plotly_chart(fig_g, use_container_width=True)
+
+    with g2:
+        # YoY growth % bars — positive/negative waterfall feel
+        yoy_q = vis_fall.dropna(subset=["YoY%"]).copy()
+        fig_yoy = go.Figure(go.Bar(
+            x=yoy_q["YoY%"], y=yoy_q["Label"], orientation="h",
+            marker_color=yoy_q["bar_col"], opacity=.85,
+            text=yoy_q["YoY%"].apply(lambda v: f"{v:+.1f}%"), textposition="outside",
+        ))
+        fig_yoy.add_vline(x=0, line_color="#374151", line_width=1)
+        fig_yoy.update_layout(title="YoY Growth % by Quarter", height=300,
+                              xaxis=dict(showgrid=False, ticksuffix="%", zeroline=False),
+                              yaxis=dict(showgrid=False),
+                              **CHART)
+        st.plotly_chart(fig_yoy, use_container_width=True)
+
+    # ══ Q2: Are we hitting targets? ══════════════════════════════════════════
+    st.markdown('<p class="sec-lbl">② Are we hitting our targets?</p>', unsafe_allow_html=True)
 
     ma2 = (sales.groupby(["Year","Month"])["Net Sales"].sum().reset_index()
            .assign(Date=lambda d: pd.to_datetime(d[["Year","Month"]].assign(day=1))))
@@ -687,123 +747,193 @@ elif page == "Sales Performance":
     mrg["Var%"] = (mrg["Net Sales"] / mrg["Budget Sales"] - 1) * 100
     mrg["Col"]  = mrg["Var"].apply(lambda v: C["green"] if v >= 0 else C["red"])
 
-    fig_v = go.Figure()
+    fig_v = make_subplots(specs=[[{"secondary_y": True}]])
     fig_v.add_trace(go.Bar(x=mrg["Date"], y=mrg["Var"],
-                           marker_color=mrg["Col"], name="$ Variance", opacity=.85))
+                           marker_color=mrg["Col"], name="$ Variance", opacity=.85),
+                    secondary_y=False)
     fig_v.add_trace(go.Scatter(x=mrg["Date"], y=mrg["Var%"],
-                               name="% Variance", yaxis="y2",
-                               line=dict(color=C["navy"], width=1.5)))
+                               name="% Variance", line=dict(color=C["navy"], width=1.5)),
+                    secondary_y=True)
     fig_v.add_hline(y=0, line_color="#374151", line_width=1)
-    fig_v.update_layout(
-        title="Monthly Revenue Variance vs Target  (bar = $, line = %)",
-        height=290,
-        yaxis=dict(title="$ Variance", showgrid=True, gridcolor=C["grid"], tickprefix="$"),
-        yaxis2=dict(title="% Variance", overlaying="y", side="right",
-                    ticksuffix="%", showgrid=False),
-        legend=dict(orientation="h", y=-0.22), **CHART)
+    fig_v.update_layout(title="Monthly Revenue Variance vs Target",
+                        height=280, legend=dict(orientation="h", y=-0.22), **CHART)
+    fig_v.update_yaxes(tickprefix="$", showgrid=True,  gridcolor=C["grid"], secondary_y=False)
+    fig_v.update_yaxes(ticksuffix="%", showgrid=False, secondary_y=True)
     st.plotly_chart(fig_v, use_container_width=True)
 
-    col_yoy, col_roll = st.columns(2)
+    # ══ Q3: Where is growth coming from? ═════════════════════════════════════
+    st.markdown('<p class="sec-lbl">③ Where is growth coming from?</p>', unsafe_allow_html=True)
 
-    with col_yoy:
-        fall = (sales_raw[sales_raw["Store ID"].isin(valid_stores) &
-                          sales_raw["Product ID"].isin(valid_prods)]
-                .groupby(["Year","Month"])["Net Sales"].sum().reset_index()
-                .assign(Date=lambda d: pd.to_datetime(d[["Year","Month"]].assign(day=1)))
-                .sort_values("Date"))
-        fall["YoY%"] = fall.groupby("Month")["Net Sales"].pct_change() * 100
-        yoy = fall[fall["Year"].isin(sel_years)].dropna(subset=["YoY%"]).copy()
-        yoy["C"] = yoy["YoY%"].apply(lambda v: C["green"] if v >= 0 else C["red"])
-        fig_yoy = go.Figure(go.Bar(x=yoy["Date"], y=yoy["YoY%"],
-                                   marker_color=yoy["C"], opacity=.85))
-        fig_yoy.add_hline(y=0, line_color="#374151", line_width=1)
-        fig_yoy.update_layout(title="YoY Growth % (month-over-month)", height=260,
-                              yaxis=dict(showgrid=True, gridcolor=C["grid"], ticksuffix="%"),
+    w1, w2, w3 = st.columns(3)
+
+    with w1:
+        by_country = (sales.merge(store_raw[["Store ID","Store Country"]], on="Store ID", how="left")
+                      .groupby("Store Country")["Net Sales"].sum().reset_index()
+                      .sort_values("Net Sales"))
+        by_country["share"] = by_country["Net Sales"] / by_country["Net Sales"].sum() * 100
+        fig_c = go.Figure(go.Bar(
+            y=by_country["Store Country"], x=by_country["Net Sales"], orientation="h",
+            marker_color=C["blue"], opacity=.85,
+            text=by_country["share"].apply(lambda v: f"{v:.0f}%"), textposition="outside",
+        ))
+        fig_c.update_layout(title="Revenue by Country", height=240,
+                            xaxis=dict(showgrid=False, tickprefix="$", showticklabels=False),
+                            yaxis=dict(showgrid=False), **CHART)
+        st.plotly_chart(fig_c, use_container_width=True)
+
+    with w2:
+        by_ch = (sales.merge(store_raw[["Store ID","Store Channel"]], on="Store ID", how="left")
+                 .groupby("Store Channel")["Net Sales"].sum().reset_index()
+                 .sort_values("Net Sales"))
+        by_ch["share"] = by_ch["Net Sales"] / by_ch["Net Sales"].sum() * 100
+        fig_ch = go.Figure(go.Bar(
+            y=by_ch["Store Channel"], x=by_ch["Net Sales"], orientation="h",
+            marker_color=C["teal"], opacity=.85,
+            text=by_ch["share"].apply(lambda v: f"{v:.0f}%"), textposition="outside",
+        ))
+        fig_ch.update_layout(title="Revenue by Channel", height=240,
+                             xaxis=dict(showgrid=False, tickprefix="$", showticklabels=False),
+                             yaxis=dict(showgrid=False), **CHART)
+        st.plotly_chart(fig_ch, use_container_width=True)
+
+    with w3:
+        by_cat = (sales.merge(product_raw[["Product ID","Category"]], on="Product ID", how="left")
+                  .groupby("Category")["Net Sales"].sum().reset_index()
+                  .sort_values("Net Sales"))
+        by_cat["share"] = by_cat["Net Sales"] / by_cat["Net Sales"].sum() * 100
+        fig_cat = go.Figure(go.Bar(
+            y=by_cat["Category"], x=by_cat["Net Sales"], orientation="h",
+            marker_color=C["purple"], opacity=.85,
+            text=by_cat["share"].apply(lambda v: f"{v:.0f}%"), textposition="outside",
+        ))
+        fig_cat.update_layout(title="Revenue by Category", height=240,
+                              xaxis=dict(showgrid=False, tickprefix="$", showticklabels=False),
+                              yaxis=dict(showgrid=False), **CHART)
+        st.plotly_chart(fig_cat, use_container_width=True)
+
+    # ══ Q4: Are we selling efficiently? ══════════════════════════════════════
+    st.markdown('<p class="sec-lbl">④ Are we selling efficiently?</p>', unsafe_allow_html=True)
+
+    e1, e2, e3 = st.columns(3)
+
+    with e1:
+        # AOV by quarter
+        aov_q = (sales[sales["Order Type"]=="Sales"]
+                 .groupby(["Year","Quarter"])
+                 .agg(Revenue=("Net Sales","sum"), Orders=("Order ID","nunique"))
+                 .reset_index())
+        aov_q["AOV"] = aov_q["Revenue"] / aov_q["Orders"]
+        aov_q["Label"] = aov_q["Year"].astype(str) + " " + aov_q["Quarter"].astype(str)
+        aov_q = aov_q[aov_q["Year"].isin(sel_years)].sort_values(["Year","Quarter"])
+        fig_aov = go.Figure(go.Scatter(
+            x=aov_q["Label"], y=aov_q["AOV"],
+            mode="lines+markers", line=dict(color=C["blue"], width=2),
+            marker=dict(size=7), fill="tozeroy", fillcolor="rgba(0,120,212,0.08)",
+        ))
+        fig_aov.update_layout(title="AOV Trend ($/Order)", height=230,
+                              xaxis=dict(showgrid=False),
+                              yaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
                               **CHART)
-        st.plotly_chart(fig_yoy, use_container_width=True)
+        st.plotly_chart(fig_aov, use_container_width=True)
 
-    with col_roll:
-        fall["Roll3"]  = fall["Net Sales"].rolling(3,  min_periods=1).mean()
-        fall["Roll12"] = fall["Net Sales"].rolling(12, min_periods=1).mean()
-        vis = fall[fall["Year"].isin(sel_years)]
-        fig_r = go.Figure()
-        fig_r.add_trace(go.Scatter(x=vis["Date"], y=vis["Net Sales"],
-                                   name="Monthly", opacity=.35,
-                                   line=dict(color=C["blue"], width=1)))
-        fig_r.add_trace(go.Scatter(x=vis["Date"], y=vis["Roll3"],
-                                   name="3M Avg", line=dict(color=C["amber"], width=2)))
-        fig_r.add_trace(go.Scatter(x=vis["Date"], y=vis["Roll12"],
-                                   name="12M Avg",
-                                   line=dict(color=C["green"], width=2, dash="dash")))
-        fig_r.update_layout(title="Rolling Revenue Averages", height=260,
-                            legend=dict(orientation="h", y=-0.28),
-                            yaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
-                            **CHART)
-        st.plotly_chart(fig_r, use_container_width=True)
+    with e2:
+        # Discount rate by quarter
+        disc_q = (sales[sales["Order Type"]=="Sales"]
+                  .groupby(["Year","Quarter"])["Discount"].mean()
+                  .reset_index())
+        disc_q["Disc%"] = disc_q["Discount"] * 100
+        disc_q["Label"] = disc_q["Year"].astype(str) + " " + disc_q["Quarter"].astype(str)
+        disc_q = disc_q[disc_q["Year"].isin(sel_years)].sort_values(["Year","Quarter"])
+        disc_q["col"] = disc_q["Disc%"].apply(lambda v: C["red"] if v > 15 else C["amber"])
+        fig_disc = go.Figure(go.Bar(
+            x=disc_q["Label"], y=disc_q["Disc%"],
+            marker_color=disc_q["col"], opacity=.85,
+            text=disc_q["Disc%"].apply(lambda v: f"{v:.1f}%"), textposition="outside",
+        ))
+        fig_disc.add_hline(y=15, line_dash="dash", line_color=C["red"],
+                           annotation_text="15% threshold", annotation_position="top right")
+        fig_disc.update_layout(title="Avg Discount % by Quarter", height=230,
+                               xaxis=dict(showgrid=False),
+                               yaxis=dict(showgrid=True, gridcolor=C["grid"], ticksuffix="%"),
+                               **CHART)
+        st.plotly_chart(fig_disc, use_container_width=True)
 
-    st.markdown('<p class="sec-lbl">Returns</p>', unsafe_allow_html=True)
-    ret_src = (sales_raw[sales_raw["Store ID"].isin(valid_stores) &
-                         sales_raw["Year"].isin(sel_years)]
-               .groupby(["Year","Month","Order Type"])["Sales"].sum()
-               .reset_index()
-               .pivot_table(index=["Year","Month"], columns="Order Type",
-                            values="Sales", fill_value=0)
-               .reset_index())
+    with e3:
+        # Return rate by quarter
+        ret_q = (sales_raw[sales_raw["Store ID"].isin(valid_stores) &
+                           sales_raw["Year"].isin(sel_years)]
+                 .groupby(["Year","Quarter","Order Type"])["Sales"].sum()
+                 .reset_index())
+        ret_sales = ret_q[ret_q["Order Type"]=="Sales"].rename(columns={"Sales":"Gross"})
+        ret_ret   = ret_q[ret_q["Order Type"]=="Return"].rename(columns={"Sales":"Returns"})
+        ret_m = ret_sales.merge(ret_ret[["Year","Quarter","Returns"]],
+                                on=["Year","Quarter"], how="left").fillna(0)
+        ret_m["Ret%"] = ret_m["Returns"].abs() / ret_m["Gross"] * 100
+        ret_m["Label"] = ret_m["Year"].astype(str) + " " + ret_m["Quarter"].astype(str)
+        ret_m = ret_m.sort_values(["Year","Quarter"])
+        ret_m["col"] = ret_m["Ret%"].apply(lambda v: C["red"] if v > 20 else C["amber"])
+        fig_ret2 = go.Figure(go.Bar(
+            x=ret_m["Label"], y=ret_m["Ret%"],
+            marker_color=ret_m["col"], opacity=.85,
+            text=ret_m["Ret%"].apply(lambda v: f"{v:.1f}%"), textposition="outside",
+        ))
+        fig_ret2.add_hline(y=20, line_dash="dash", line_color=C["red"],
+                           annotation_text="20% threshold", annotation_position="top right")
+        fig_ret2.update_layout(title="Return Rate % by Quarter", height=230,
+                               xaxis=dict(showgrid=False),
+                               yaxis=dict(showgrid=True, gridcolor=C["grid"], ticksuffix="%"),
+                               **CHART)
+        st.plotly_chart(fig_ret2, use_container_width=True)
 
-    cr1, cr2 = st.columns(2)
-    if "Return" in ret_src.columns and "Sales" in ret_src.columns:
-        ret_src["Ret%"] = ret_src["Return"] / ret_src["Sales"] * 100
-        ret_src["Date"] = pd.to_datetime(ret_src[["Year","Month"]].assign(day=1))
-        ret_src = ret_src.sort_values("Date")
-        with cr1:
-            fig_ret = px.area(ret_src, x="Date", y="Ret%",
-                              title="Monthly Return Rate %",
-                              color_discrete_sequence=[C["red"]])
-            fig_ret.update_layout(height=230,
-                                  yaxis=dict(showgrid=True, gridcolor=C["grid"],
-                                             ticksuffix="%"), **CHART)
-            st.plotly_chart(fig_ret, use_container_width=True)
+    # ══ Q5: What's the bottom line? ═══════════════════════════════════════════
+    st.markdown('<p class="sec-lbl">⑤ What\'s the bottom line?</p>', unsafe_allow_html=True)
 
-    with cr2:
-        ret_cat = (sales[sales["Order Type"]=="Return"]
-                   .merge(product_raw[["Product ID","Category"]], on="Product ID", how="left")
-                   .groupby("Category")["Sales"].sum().reset_index()
-                   .sort_values("Sales", ascending=False))
-        ret_cat["lbl"] = ret_cat["Sales"].apply(fmt)
-        fig_rc = go.Figure(go.Bar(x=ret_cat["Category"], y=ret_cat["Sales"],
-                                  text=ret_cat["lbl"], textposition="outside",
-                                  marker_color=C["red"], opacity=.8))
-        fig_rc.update_layout(title="Return Value by Category", height=230,
+    m1, m2 = st.columns(2)
+
+    with m1:
+        # Gross Margin % by quarter
+        margin_q = (sales[sales["Order Type"]=="Sales"]
+                    .groupby(["Year","Quarter"])
+                    .agg(Revenue=("Net Sales","sum"), Cost=("Net Cost","sum"))
+                    .reset_index())
+        margin_q["GM%"] = (margin_q["Revenue"] - margin_q["Cost"]) / margin_q["Revenue"] * 100
+        margin_q["Label"] = margin_q["Year"].astype(str) + " " + margin_q["Quarter"].astype(str)
+        margin_q = margin_q[margin_q["Year"].isin(sel_years)].sort_values(["Year","Quarter"])
+        fig_gm = go.Figure(go.Scatter(
+            x=margin_q["Label"], y=margin_q["GM%"],
+            mode="lines+markers", line=dict(color=C["green"], width=2.5),
+            marker=dict(size=7), fill="tozeroy", fillcolor="rgba(16,124,16,0.08)",
+            text=margin_q["GM%"].apply(lambda v: f"{v:.1f}%"), textposition="top center",
+        ))
+        fig_gm.update_layout(title="Gross Margin % Trend by Quarter", height=260,
+                             xaxis=dict(showgrid=False),
                              yaxis=dict(showgrid=True, gridcolor=C["grid"],
-                                        tickprefix="$"), **CHART)
-        st.plotly_chart(fig_rc, use_container_width=True)
+                                        ticksuffix="%", range=[0, margin_q["GM%"].max()*1.2]),
+                             **CHART)
+        st.plotly_chart(fig_gm, use_container_width=True)
 
-    st.markdown('<p class="sec-lbl">Discount Impact</p>', unsafe_allow_html=True)
-    tmp = sales.copy()
-    tmp["Band"] = pd.cut(tmp["Discount"],
-                         bins=[-0.001,0,.10,.20,.30,.50,1.],
-                         labels=["0%","1–10%","11–20%","21–30%","31–50%",">50%"])
-    disc = (tmp.groupby("Band", observed=True)
-            .agg(Revenue=("Net Sales","sum"), Txn=("Order ID","count"))
-            .reset_index())
-    disc["lbl"] = disc["Revenue"].apply(fmt)
-
-    dd1, dd2 = st.columns(2)
-    with dd1:
-        fig_d1 = go.Figure(go.Bar(x=disc["Band"], y=disc["Revenue"],
-                                  text=disc["lbl"], textposition="outside",
-                                  marker_color=C["blue"]))
-        fig_d1.update_layout(title="Revenue by Discount Band", height=230,
-                             yaxis=dict(showgrid=True, gridcolor=C["grid"],
-                                        tickprefix="$"), **CHART)
-        st.plotly_chart(fig_d1, use_container_width=True)
-    with dd2:
-        fig_d2 = go.Figure(go.Bar(x=disc["Band"], y=disc["Txn"],
-                                  text=disc["Txn"], textposition="outside",
-                                  marker_color=C["teal"]))
-        fig_d2.update_layout(title="Transaction Count by Discount Band", height=230,
-                             yaxis=dict(showgrid=True, gridcolor=C["grid"]), **CHART)
-        st.plotly_chart(fig_d2, use_container_width=True)
+    with m2:
+        # Revenue vs Gross Profit by year — dual bar
+        annual = (sales[sales["Order Type"]=="Sales"]
+                  .groupby("Year")
+                  .agg(Revenue=("Net Sales","sum"), Cost=("Net Cost","sum"))
+                  .reset_index())
+        annual["GP"] = annual["Revenue"] - annual["Cost"]
+        annual["GM%"] = annual["GP"] / annual["Revenue"] * 100
+        annual = annual[annual["Year"].isin(sel_years)]
+        fig_ann = go.Figure()
+        fig_ann.add_trace(go.Bar(x=annual["Year"].astype(str), y=annual["Revenue"],
+                                 name="Revenue", marker_color=C["blue"], opacity=.7))
+        fig_ann.add_trace(go.Bar(x=annual["Year"].astype(str), y=annual["GP"],
+                                 name="Gross Profit", marker_color=C["green"], opacity=.85,
+                                 text=annual["GM%"].apply(lambda v: f"{v:.1f}%"),
+                                 textposition="outside"))
+        fig_ann.update_layout(title="Annual Revenue vs Gross Profit", height=260,
+                              barmode="group",
+                              yaxis=dict(showgrid=True, gridcolor=C["grid"], tickprefix="$"),
+                              legend=dict(orientation="h", y=-0.22),
+                              **CHART)
+        st.plotly_chart(fig_ann, use_container_width=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
