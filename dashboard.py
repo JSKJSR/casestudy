@@ -715,17 +715,18 @@ elif page == "Product & Category":
 
     ps = sales.merge(product_raw, on="Product ID", how="left")
 
-    net_s = ps["Net Sales"].sum()
-    net_c = ps["Net Cost"].sum()
-    gm    = (net_s - net_c) / net_s * 100 if net_s else 0
+    KP    = calc_kpis(ps)
     prods = ps["Product ID"].nunique()
-    avg_d = ps["Discount"].mean() * 100
+    avg_d = ps[ps["Order Type"]=="Sales"]["Discount"].mean() * 100
 
-    k1,k2,k3,k4 = st.columns(4)
-    k1.metric("Total Revenue",    fmt(net_s))
-    k2.metric("Gross Margin",     f"{gm:.1f}%")
-    k3.metric("Unique SKUs Sold", f"{prods:,}")
-    k4.metric("Avg Discount",     f"{avg_d:.1f}%")
+    k1,k2,k3,k4,k5,k6,k7 = st.columns(7)
+    k1.metric("Gross Sales",    fmt(KP["gross_sales"]))
+    k2.metric("Net Sales",      fmt(KP["net_sales"]))
+    k3.metric("Gross Profit",   fmt(KP["gross_profit"]))
+    k4.metric("Profit Margin",  f"{KP['profit_margin']:.1f}%")
+    k5.metric("Return Rate",    f"{KP['return_rate']:.1f}%")
+    k6.metric("Unique SKUs",    f"{prods:,}")
+    k7.metric("Avg Discount",   f"{avg_d:.1f}%")
 
     st.markdown('<p class="sec-lbl">Category Overview</p>', unsafe_allow_html=True)
     ct1, ct2 = st.columns([3,2])
@@ -846,30 +847,59 @@ elif page == "Store Network":
     st.markdown('<p class="pg-title">Store Network</p>', unsafe_allow_html=True)
     st.markdown('<p class="pg-sub">Per-store KPIs · Efficiency · LFL · Area managers</p>', unsafe_allow_html=True)
 
+    # Per-store KPIs using correct split: sales rows for COGS/orders, return rows for return metrics
+    s_only = sales[sales["Order Type"] == "Sales"]
+    r_only = sales[sales["Order Type"] == "Return"]
+
     bgt_s  = budget.groupby("Store ID")["Budget Sales"].sum().reset_index()
-    st_agg = (sales.groupby("Store ID")
-              .agg(Revenue=("Net Sales","sum"), Cost=("Net Cost","sum"),
-                   Qty=("Net Qty","sum"), Txn=("Order ID","nunique"))
-              .reset_index()
+
+    st_s = (s_only.groupby("Store ID")
+            .agg(GrossSales=("Sales","sum"), COGS=("Cost","sum"),
+                 SalesOrders=("Order ID","nunique"), SalesQty=("Quantity","sum"))
+            .reset_index())
+    st_r = (r_only.groupby("Store ID")
+            .agg(ReturnSales=("Sales","sum"), ReturnCost=("Cost","sum"))
+            .reset_index())
+
+    st_agg = (st_s.merge(st_r, on="Store ID", how="left")
               .merge(store_raw[["Store ID","Store Name","Store Country",
                                 "Store Channel","Store Format","Store SQM",
                                 "Store Area Manager","Store LFL Status",
                                 "Store Status"]], on="Store ID", how="left")
               .merge(bgt_s, on="Store ID", how="left"))
 
-    st_agg["GM%"]       = (st_agg["Revenue"]-st_agg["Cost"])/st_agg["Revenue"]*100
-    st_agg["Sales/SQM"] = st_agg["Revenue"]/st_agg["Store SQM"]
-    st_agg["vs Bgt%"]   = (st_agg["Revenue"]/st_agg["Budget Sales"]-1)*100
-    st_agg["Avg Basket"]= st_agg["Revenue"]/st_agg["Txn"]
+    st_agg["ReturnSales"]  = st_agg["ReturnSales"].fillna(0)
+    st_agg["ReturnCost"]   = st_agg["ReturnCost"].fillna(0)
 
-    k1,k2,k3,k4,k5 = st.columns(5)
-    k1.metric("Stores",        f"{st_agg['Store ID'].nunique()}")
-    k2.metric("Open",          f"{(st_agg['Store Status']=='Open').sum()}")
-    k3.metric("Avg €/SQM",     f"€{st_agg['Sales/SQM'].mean():.0f}")
-    k4.metric("Avg Basket",    f"€{st_agg['Avg Basket'].mean():.0f}")
-    if not st_agg.empty:
-        best = st_agg.loc[st_agg["Revenue"].idxmax()]
-        k5.metric("Top Store", best["Store Name"], fmt(best["Revenue"]))
+    # KPI 3 – Net Sales
+    st_agg["Revenue"]      = st_agg["GrossSales"] - st_agg["ReturnSales"].abs()
+    # KPI 6 – Net COGS
+    st_agg["NetCOGS"]      = st_agg["COGS"] - st_agg["ReturnCost"].abs()
+    # KPI 7 – Gross Profit
+    st_agg["GrossProfit"]  = st_agg["Revenue"] - st_agg["NetCOGS"]
+    # KPI 8 – Profit Margin
+    st_agg["GM%"]          = (st_agg["GrossProfit"] / st_agg["Revenue"] * 100).fillna(0)
+    # KPI 10 – AOV (÷ sales orders only)
+    st_agg["AOV"]          = st_agg["Revenue"] / st_agg["SalesOrders"]
+    # KPI 11 – Units per Order (sales qty ÷ sales orders)
+    st_agg["Units/Order"]  = st_agg["SalesQty"] / st_agg["SalesOrders"]
+    # KPI 12 – Return Rate
+    st_agg["ReturnRate%"]  = (st_agg["ReturnSales"].abs() / st_agg["GrossSales"] * 100).fillna(0)
+    # Store efficiency
+    st_agg["Sales/SQM"]    = st_agg["Revenue"] / st_agg["Store SQM"]
+    st_agg["vs Bgt%"]      = (st_agg["Revenue"] / st_agg["Budget Sales"] - 1) * 100
+
+    # Network-level KPIs via calc_kpis()
+    KS = calc_kpis(sales, budget)
+
+    k1,k2,k3,k4,k5,k6,k7 = st.columns(7)
+    k1.metric("Total Stores",   f"{st_agg['Store ID'].nunique()}")
+    k2.metric("Open Stores",    f"{(st_agg['Store Status']=='Open').sum()}")
+    k3.metric("Net Sales",      fmt(KS["net_sales"]))
+    k4.metric("Gross Profit",   fmt(KS["gross_profit"]))
+    k5.metric("Profit Margin",  f"{KS['profit_margin']:.1f}%")
+    k6.metric("Avg AOV",        f"€{st_agg['AOV'].mean():.0f}")
+    k7.metric("Avg €/SQM",      f"€{st_agg['Sales/SQM'].mean():.0f}")
 
     st.markdown('<p class="sec-lbl">Store vs Budget</p>', unsafe_allow_html=True)
     cs1, cs2 = st.columns([3,2])
@@ -967,18 +997,23 @@ elif page == "Store Network":
 
     st.markdown('<p class="sec-lbl">Store Detail</p>', unsafe_allow_html=True)
     tbl = st_agg[["Store Name","Store Country","Store Channel","Store Format",
-                  "Store Status","Revenue","Budget Sales","vs Bgt%","GM%",
-                  "Sales/SQM","Avg Basket"]].copy()
+                  "Store Status","GrossSales","Revenue","Budget Sales",
+                  "vs Bgt%","GrossProfit","GM%","ReturnRate%",
+                  "AOV","Units/Order","Sales/SQM"]].copy()
     tbl.columns = ["Store","Country","Channel","Format","Status",
-                   "Revenue","Budget","vs Bgt%","GM%","€/SQM","Avg Basket"]
+                   "Gross Sales","Net Sales","Budget","vs Bgt%",
+                   "Gross Profit","GM%","Return Rate%","AOV","Units/Order","€/SQM"]
     st.dataframe(
         tbl.style
-        .format({"Revenue":"€{:,.0f}","Budget":"€{:,.0f}",
-                 "vs Bgt%":"{:+.1f}%","GM%":"{:.1f}%",
-                 "€/SQM":"€{:.0f}","Avg Basket":"€{:.0f}"})
-        .background_gradient(subset=["Revenue"], cmap="Blues")
-        .map(lambda v: f"color:{'green' if v>=0 else 'red'}"
-             if isinstance(v,(int,float)) else "", subset=["vs Bgt%"]),
+        .format({"Gross Sales":"€{:,.0f}","Net Sales":"€{:,.0f}",
+                 "Budget":"€{:,.0f}","vs Bgt%":"{:+.1f}%",
+                 "Gross Profit":"€{:,.0f}","GM%":"{:.1f}%",
+                 "Return Rate%":"{:.1f}%","AOV":"€{:.0f}",
+                 "Units/Order":"{:.2f}","€/SQM":"€{:.0f}"})
+        .background_gradient(subset=["Net Sales"], cmap="Blues")
+        .map(lambda v: "color:#107C10;font-weight:700" if isinstance(v,(int,float)) and v>=0
+             else ("color:#D13438;font-weight:700" if isinstance(v,(int,float)) else ""),
+             subset=["vs Bgt%"]),
         use_container_width=True,
         hide_index=True,
     )
