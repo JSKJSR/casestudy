@@ -497,7 +497,7 @@ if page == "Executive Summary":
     ))
     fig.add_trace(go.Scatter(
         x=q_merged["Label"], y=q_merged["Budget Sales"],
-        name="Target", line=dict(color=C["amber"], width=2, dash="dash"),
+        name="Budget", line=dict(color=C["amber"], width=2, dash="dash"),
         mode="lines+markers", marker=dict(size=6),
     ))
     fig.add_trace(go.Scatter(
@@ -506,7 +506,7 @@ if page == "Executive Summary":
         mode="lines+markers", marker=dict(size=6),
     ))
     fig.update_layout(
-        title="Quarterly Net Revenue vs Target vs Last Year",
+        title="Quarterly Net Revenue vs Budget vs Last Year",
         height=340,
         legend=dict(orientation="h", y=-0.22),
         xaxis=dict(showgrid=False),
