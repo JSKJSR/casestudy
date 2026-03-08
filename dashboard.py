@@ -470,7 +470,8 @@ if page == "Executive Summary":
           .assign(Label=lambda d: d["Year"].astype(str) + " Q" + d["Quarter"].astype(str))
           .sort_values(["Year","Quarter"]))
 
-    qb = (budget.groupby(["Year","Quarter"])["Budget Sales"].sum().reset_index()
+    qb = (budget.assign(Quarter=((budget["Month"]-1)//3+1))
+          .groupby(["Year","Quarter"])["Budget Sales"].sum().reset_index()
           .assign(Label=lambda d: d["Year"].astype(str) + " Q" + d["Quarter"].astype(str)))
 
     ly_yrs = [y-1 for y in sel_years]
