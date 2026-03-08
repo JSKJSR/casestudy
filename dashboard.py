@@ -1170,7 +1170,6 @@ elif page == "Store Network":
             st_agg, x="Revenue", y="GM%",
             size="Revenue", color="Store Country",
             hover_name="Store Name",
-            hover_data={"Revenue":":$,.0f","GM%":":.1f","Store Country":False},
             title="Revenue vs Gross Margin % (bubble = revenue size)",
             size_max=40,
             color_discrete_sequence=[C["blue"],C["teal"],C["amber"],C["purple"]],
