@@ -1487,7 +1487,7 @@ elif page == "Insights & Actions":
               .groupby("Store ID")["Net Sales"].sum().reset_index()
               .rename(columns={"Net Sales":"LY_Rev"}))
     sqm_map = store_raw[["Store ID","Store Name","Store Country","Store Channel",
-                          "Store Status","Area Manager","Store Size (SQM)"]].copy()
+                          "Store Status","Store Area Manager","Store SQM"]].copy()
 
     st_agg = (sales[sales["Order Type"]=="Sales"]
               .groupby("Store ID")
@@ -1500,7 +1500,7 @@ elif page == "Insights & Actions":
     st_agg["vs_bgt%"] = (st_agg["Revenue"] / st_agg["Budget Sales"] - 1) * 100
     st_agg["vs_ly%"]  = (st_agg["Revenue"] / st_agg["LY_Rev"]        - 1) * 100
     st_agg["GM%"]     = (st_agg["Revenue"] - st_agg["Cost"]) / st_agg["Revenue"] * 100
-    st_agg["SQM_Rev"] = st_agg["Revenue"] / st_agg["Store Size (SQM)"].replace(0, pd.NA)
+    st_agg["SQM_Rev"] = st_agg["Revenue"] / st_agg["Store SQM"].replace(0, pd.NA)
     st_agg["AOV"]     = st_agg["Revenue"] / st_agg["Orders"].replace(0, pd.NA)
 
     open_stores   = st_agg[st_agg["Store Status"]=="Open"]
@@ -1511,7 +1511,7 @@ elif page == "Insights & Actions":
     low_sqm       = open_stores.dropna(subset=["SQM_Rev"]).nsmallest(3, "SQM_Rev")
 
     # Area manager accountability
-    am_perf = (open_stores.groupby("Area Manager")
+    am_perf = (open_stores.groupby("Store Area Manager")
                .agg(Revenue=("Revenue","sum"), Budget=("Budget Sales","sum"))
                .assign(**{"vs_bgt%": lambda d: (d["Revenue"]/d["Budget"]-1)*100})
                .sort_values("vs_bgt%"))
