@@ -475,14 +475,16 @@ if page == "Executive Summary":
 
     st.markdown('<p class="sec-lbl">Revenue Trend</p>', unsafe_allow_html=True)
 
-    # ── Quarterly Revenue vs Target vs Last Year ──────────────────────────────
+    # ── Quarterly Revenue vs Budget vs Last Year ──────────────────────────────
+    # Quarter in sales is stored as "Q1","Q2"... so label = Year + " " + Quarter
     qa = (sales.groupby(["Year","Quarter"])["Net Sales"].sum().reset_index()
-          .assign(Label=lambda d: d["Year"].astype(str) + " Q" + d["Quarter"].astype(str))
+          .assign(Label=lambda d: d["Year"].astype(str) + " " + d["Quarter"].astype(str))
           .sort_values(["Year","Quarter"]))
 
-    qb = (budget.assign(Quarter=((budget["Month"]-1)//3+1))
+    # Budget has no Quarter; derive as int then format as "Q1" to match sales
+    qb = (budget.assign(Quarter="Q" + ((budget["Month"]-1)//3+1).astype(str))
           .groupby(["Year","Quarter"])["Budget Sales"].sum().reset_index()
-          .assign(Label=lambda d: d["Year"].astype(str) + " Q" + d["Quarter"].astype(str)))
+          .assign(Label=lambda d: d["Year"].astype(str) + " " + d["Quarter"].astype(str)))
 
     ly_yrs = [y-1 for y in sel_years]
     max_actual_qtr = qa[["Year","Quarter"]].iloc[-1]  # last quarter with real data
@@ -495,7 +497,7 @@ if page == "Executive Summary":
     # Clip to not exceed last actual quarter
     ql = ql[(ql["Year"] < max_actual_qtr["Year"]) |
             ((ql["Year"] == max_actual_qtr["Year"]) & (ql["Quarter"] <= max_actual_qtr["Quarter"]))]
-    ql = ql.assign(Label=lambda d: d["Year"].astype(str) + " Q" + d["Quarter"].astype(str))
+    ql = ql.assign(Label=lambda d: d["Year"].astype(str) + " " + d["Quarter"].astype(str))
 
     q_merged = qa.merge(qb[["Label","Budget Sales"]], on="Label", how="left") \
                  .merge(ql[["Label","Net Sales"]].rename(columns={"Net Sales":"LY Sales"}), on="Label", how="left")
