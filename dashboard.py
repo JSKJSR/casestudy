@@ -950,6 +950,44 @@ elif page == "Product & Category":
     prods = ps["Product ID"].nunique()
     avg_d = ps[ps["Order Type"]=="Sales"]["Discount"].mean() * 100
 
+    # ── Image strip helper ────────────────────────────────────────────────────
+    def image_strip(df_top, rev_col="Revenue", gm_col="GM%", label_col="Product Name",
+                    img_col="Product Image URL", border_color="#0078D4", max_items=10,
+                    gm_label="GM", invert_gm=False):
+        """Render a horizontal scrollable strip of product image cards.
+        invert_gm=True colours high values red (for return rate)."""
+        rows = df_top.head(max_items).to_dict("records")
+        cards_html = ""
+        for r in rows:
+            url   = r.get(img_col, "")
+            name  = str(r.get(label_col, ""))[:28] + ("…" if len(str(r.get(label_col,""))) > 28 else "")
+            rev   = fmt(r.get(rev_col, 0))
+            gm    = f"{r.get(gm_col, 0):.0f}%"
+            v     = r.get(gm_col, 0)
+            if invert_gm:
+                gm_c = "#D13438" if v >= 20 else ("#FF8C00" if v >= 10 else "#107C10")
+            else:
+                gm_c  = "#107C10" if v >= 40 else ("#FF8C00" if v >= 25 else "#D13438")
+            img_tag = (f'<img src="{url}" style="width:100%;height:90px;object-fit:cover;'
+                       f'border-radius:4px 4px 0 0;background:#f3f2f1;" '
+                       f'onerror="this.style.display=\'none\'">')
+            cards_html += f"""
+<div style="min-width:130px;max-width:130px;background:#fff;border:1px solid #edebe9;
+            border-top:3px solid {border_color};border-radius:6px;
+            box-shadow:0 1px 3px rgba(0,0,0,.08);flex-shrink:0;overflow:hidden;">
+  {img_tag}
+  <div style="padding:7px 8px;">
+    <div style="font-size:10px;font-weight:600;color:#252423;line-height:1.3;
+                min-height:28px;">{name}</div>
+    <div style="font-size:10px;color:#605E5C;margin-top:3px;">{rev}</div>
+    <div style="font-size:11px;font-weight:700;color:{gm_c};margin-top:1px;">{gm_label} {gm}</div>
+  </div>
+</div>"""
+        st.markdown(
+            f'<div style="display:flex;gap:10px;overflow-x:auto;padding:8px 2px 12px 2px;">'
+            f'{cards_html}</div>',
+            unsafe_allow_html=True)
+
     # ── Headline KPIs ─────────────────────────────────────────────────────────
     h1,h2,h3,h4,h5 = st.columns(5)
     def _pkpi(col, label, val, good=True):
@@ -987,6 +1025,7 @@ elif page == "Product & Category":
     pa["GrossSales"] = pa["GrossSales"].fillna(pa["Revenue"])
     pa["GM%"]        = ((pa["Revenue"] - pa["Cost"]) / pa["Revenue"] * 100).fillna(0)
     pa["RetRate%"]   = (pa["ReturnVal"] / pa["GrossSales"] * 100).fillna(0)
+    pa = pa.merge(product_raw[["Product ID","Product Image URL"]], on="Product ID", how="left")
     pa = pa.sort_values("Revenue", ascending=False)
 
     # ══ Q1: What's making us money? ══════════════════════════════════════════
@@ -1019,6 +1058,7 @@ elif page == "Product & Category":
         legend=dict(orientation="h", y=-0.08),
         **CHART)
     st.plotly_chart(fig_top, use_container_width=True)
+    image_strip(top10, border_color=C["blue"])
 
     # ══ Q2: What's costing us money? ══════════════════════════════════════════
     st.markdown('<p class="sec-lbl">② What\'s costing us money? — Bottom 10 Slow Movers</p>', unsafe_allow_html=True)
@@ -1050,6 +1090,7 @@ elif page == "Product & Category":
         legend=dict(orientation="h", y=-0.08),
         **CHART)
     st.plotly_chart(fig_slow, use_container_width=True)
+    image_strip(slow10, border_color=C["red"])
 
     # ══ Q3: Where does margin live? ═══════════════════════════════════════════
     st.markdown('<p class="sec-lbl">③ Where does margin live? — Portfolio Concentration</p>', unsafe_allow_html=True)
@@ -1146,7 +1187,8 @@ elif page == "Product & Category":
     with r4b:
         # Top 10 most-returned products
         top_ret = (pa.nlargest(10, "ReturnVal")
-                   [["Product Name","Category","ReturnVal","RetRate%"]].copy())
+                   [["Product ID","Product Name","Category","ReturnVal","RetRate%",
+                     "GM%","Product Image URL"]].copy())
         top_ret["emoji"] = top_ret["Category"].map(lambda c: _CAT_EMOJI.get(c, "🏷️"))
         top_ret["label"] = top_ret["emoji"] + " " + top_ret["Product Name"]
         top_ret = top_ret.sort_values("ReturnVal")
@@ -1160,6 +1202,9 @@ elif page == "Product & Category":
                              xaxis=dict(showgrid=False, tickprefix="$", showticklabels=False),
                              yaxis=dict(showgrid=False), **CHART)
         st.plotly_chart(fig_tr, use_container_width=True)
+        image_strip(top_ret.sort_values("ReturnVal", ascending=False),
+                    rev_col="ReturnVal", gm_col="RetRate%", gm_label="Ret",
+                    border_color=C["red"], max_items=10, invert_gm=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
