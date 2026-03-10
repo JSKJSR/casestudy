@@ -1258,7 +1258,7 @@ elif page == "Store Network":
     KS = calc_kpis(sales, budget)
 
     # ── Headline KPIs ─────────────────────────────────────────────────────────
-    h1,h2,h3,h4,h5,h6 = st.columns(6)
+    h1,h2,h3,h4,h5 = st.columns(5)
     def _skpi(col, label, val, good=True):
         color = C["green"] if good else C["red"]
         col.markdown(f"""<div style='background:#fff;border-radius:8px;padding:12px 8px;
@@ -1273,7 +1273,6 @@ elif page == "Store Network":
     _skpi(h3, "vs Target",        fmt(KS["vs_bgt"],"%"),       KS["vs_bgt"]>=0)
     _skpi(h4, "Gross Margin",     f"{KS['profit_margin']:.1f}%", KS["profit_margin"]>=40)
     _skpi(h5, "Avg $/SQM",        f"${st_agg['Sales/SQM'].mean():.0f}", True)
-    _skpi(h6, "Avg AOV",          f"${st_agg['AOV'].mean():.0f}",        True)
     st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
 
     # ══ Q1: Which stores are making money? ════════════════════════════════════
